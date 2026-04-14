@@ -1,0 +1,30 @@
+# wrangler.toml
+# Cloudflare Workers configuration for the MiLB eBay proxy
+#
+# Deploy:  wrangler deploy
+# Dev:     wrangler dev
+# Secrets: wrangler secret put EBAY_CLIENT_ID
+#          wrangler secret put EBAY_CLIENT_SECRET
+
+name            = "milb-ebay-proxy"
+main            = "worker/ebay-proxy.js"
+compatibility_date = "2024-09-23"
+
+# Non-secret environment variables go here.
+# Secrets (EBAY_CLIENT_ID, EBAY_CLIENT_SECRET) go via `wrangler secret put`
+# NEVER put secrets in this file — it gets committed to git.
+[vars]
+ENVIRONMENT    = "production"
+EBAY_ENVIRONMENT = "production"   # "sandbox" while testing, "production" after approval
+
+# Restrict CORS to your GitHub Pages domain once deployed.
+# Use "*" during local development.
+# Replace with your actual domain:
+ALLOWED_ORIGIN = "https://yourusername.github.io"
+
+# Optional: Upgrade to KV for persistent token caching across isolates.
+# Uncomment and run `wrangler kv:namespace create "CACHE"` to create the namespace,
+# then paste the returned id below.
+# [[kv_namespaces]]
+# binding = "KV"
+# id      = "your-kv-namespace-id-here"

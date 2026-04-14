@@ -1,0 +1,2165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MiLB Hot Prospects · Card Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+
+<style>
+  :root {
+    --gold: #D4A017; --gold-bright: #F0C040; --gold-dim: #8A6610;
+    --gold-glow: rgba(212,160,23,0.18);
+    --bg-base: #080B10; --bg-surface: #0E1320; --bg-card: #131928;
+    --bg-hover: #1A2235; --bg-modal: #0D1422;
+    --border: rgba(212,160,23,0.18); --border-faint: rgba(255,255,255,0.06);
+    --text-primary: #F0EDE6; --text-muted: #7A8499; --text-dim: #4A5266;
+    --red: #E24B4A; --green: #2DD4A0; --blue: #4A9EFF;
+    --hot: #FF6B35; --cold: #4A9EFF;
+    --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+    --font-display: 'Bebas Neue', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-body: 'Inter', sans-serif;
+    --sidebar-w: 280px; --header-h: 64px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-body); background: var(--bg-base); color: var(--text-primary); min-height: 100vh; overflow-x: hidden; }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+  }
+
+  /* ── Header ── */
+  .header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    height: var(--header-h); background: rgba(8,11,16,0.92);
+    backdrop-filter: blur(16px); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; padding: 0 24px; gap: 16px;
+  }
+  .header-brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+  .brand-icon {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dim) 100%);
+    border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); font-size: 18px; color: #080B10; position: relative; overflow: hidden;
+  }
+  .brand-icon::after { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 60%); }
+  .brand-name { font-family: var(--font-display); font-size: 22px; letter-spacing: 1.5px; color: var(--text-primary); line-height: 1; }
+  .brand-name span { color: var(--gold); }
+  .header-center { display: flex; align-items: center; gap: 8px; }
+  .live-badge {
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(45,212,160,0.1); border: 1px solid rgba(45,212,160,0.25);
+    border-radius: 20px; padding: 4px 10px;
+    font-size: 11px; font-family: var(--font-mono); color: var(--green);
+    letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse-dot 1.6s ease-in-out infinite; }
+  @keyframes pulse-dot { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.4; transform:scale(0.8); } }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-body); font-size: 13px; font-weight: 500; padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); cursor: pointer; transition: all 0.15s ease; white-space: nowrap; text-decoration: none; }
+  .btn-ghost { background: transparent; color: var(--text-muted); }
+  .btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); border-color: rgba(212,160,23,0.35); }
+  .btn-gold { background: var(--gold); color: #080B10; border-color: var(--gold); font-weight: 600; }
+  .btn-gold:hover { background: var(--gold-bright); border-color: var(--gold-bright); }
+  .btn-icon { padding: 7px 10px; font-size: 15px; }
+  .watchlist-count { background: var(--gold); color: #080B10; font-size: 10px; font-weight: 700; border-radius: 10px; padding: 1px 5px; min-width: 16px; text-align: center; line-height: 1.4; }
+
+  /* ── Layout ── */
+  .app-body { display: flex; padding-top: var(--header-h); min-height: 100vh; position: relative; z-index: 1; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: var(--sidebar-w); min-width: var(--sidebar-w);
+    background: var(--bg-surface); border-right: 1px solid var(--border-faint);
+    padding: 20px 0; position: fixed; top: var(--header-h); left: 0; bottom: 0;
+    overflow-y: auto; z-index: 50; transition: transform 0.25s ease;
+  }
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .sidebar-section { padding: 0 18px 20px; border-bottom: 1px solid var(--border-faint); margin-bottom: 4px; }
+  .sidebar-section:last-child { border-bottom: none; }
+  .sidebar-label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; padding-top: 16px; }
+  .sidebar-label::before { content: ''; width: 12px; height: 1px; background: var(--gold-dim); }
+  .hot-cold-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--bg-card); border-radius: var(--radius-md); padding: 4px; border: 1px solid var(--border-faint); }
+  .hc-btn { padding: 8px 0; border-radius: var(--radius-sm); border: none; background: transparent; cursor: pointer; font-family: var(--font-mono); font-size: 12px; font-weight: 600; letter-spacing: 0.5px; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 5px; }
+  .hc-btn.hot { color: var(--hot); }
+  .hc-btn.cold { color: var(--cold); }
+  .hc-btn.active.hot { background: rgba(255,107,53,0.15); border: 1px solid rgba(255,107,53,0.3); }
+  .hc-btn.active.cold { background: rgba(74,158,255,0.15); border: 1px solid rgba(74,158,255,0.3); }
+  .window-toggle { display: flex; gap: 4px; flex-wrap: wrap; }
+  .window-btn { padding: 5px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-faint); background: transparent; color: var(--text-muted); cursor: pointer; font-family: var(--font-mono); font-size: 11px; font-weight: 500; transition: all 0.15s; }
+  .window-btn.active, .window-btn:hover { border-color: var(--gold-dim); color: var(--gold); background: var(--gold-glow); }
+  .filter-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { padding: 5px 10px; border-radius: 20px; border: 1px solid var(--border-faint); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.15s; white-space: nowrap; }
+  .pill:hover { border-color: var(--border); color: var(--text-primary); }
+  .pill.active { border-color: var(--gold); color: var(--gold); background: var(--gold-glow); }
+  .range-row { display: flex; align-items: center; gap: 10px; }
+  input[type="range"] { flex: 1; -webkit-appearance: none; height: 3px; background: var(--bg-hover); border-radius: 2px; outline: none; cursor: pointer; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--gold); border: 2px solid var(--bg-surface); cursor: pointer; }
+  input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--gold); border: 2px solid var(--bg-surface); cursor: pointer; }
+  .select-styled { width: 100%; background: var(--bg-card); border: 1px solid var(--border-faint); border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--font-body); font-size: 13px; padding: 8px 10px; cursor: pointer; outline: none; transition: border-color 0.15s; }
+  .select-styled:hover, .select-styled:focus { border-color: var(--gold-dim); }
+  .reset-btn { width: 100%; padding: 8px; margin-top: 8px; border: 1px dashed var(--border-faint); border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); font-size: 12px; cursor: pointer; transition: all 0.15s; }
+  .reset-btn:hover { color: var(--text-muted); border-color: var(--text-dim); }
+
+  /* ── Main ── */
+  .main-content { flex: 1; margin-left: var(--sidebar-w); padding: 24px 28px; min-width: 0; }
+
+  /* ── Progress bar ── */
+  .fetch-progress {
+    height: 3px; background: var(--bg-card);
+    border-radius: 2px; margin-bottom: 20px; overflow: hidden;
+    display: none;
+  }
+  .fetch-progress.visible { display: block; }
+  .fetch-progress-bar {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--gold-dim), var(--gold), var(--gold-bright));
+    border-radius: 2px;
+    transition: width 0.4s ease;
+  }
+  .fetch-status {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+    margin-bottom: 12px; display: none; align-items: center; gap: 8px;
+  }
+  .fetch-status.visible { display: flex; }
+  .fetch-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); animation: pulse-dot 1s ease-in-out infinite; }
+
+  /* ── Stats bar ── */
+  .stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+  .stat-card { background: var(--bg-surface); border: 1px solid var(--border-faint); border-radius: var(--radius-md); padding: 14px 16px; position: relative; overflow: hidden; transition: border-color 0.2s; }
+  .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, var(--gold), transparent); opacity: 0.6; }
+  .stat-card:hover { border-color: var(--border); }
+  .stat-card-label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; }
+  .stat-card-value { font-family: var(--font-display); font-size: 28px; color: var(--gold); line-height: 1; letter-spacing: 0.5px; }
+  .stat-card-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .stat-card-sub .positive { color: var(--green); }
+  .stat-card-sub .negative { color: var(--red); }
+
+  /* ── Section header ── */
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 16px; }
+  .section-title { font-family: var(--font-display); font-size: 20px; letter-spacing: 1px; color: var(--text-primary); display: flex; align-items: center; gap: 10px; }
+  .tag { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 1px; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; }
+  .tag-hot { background: rgba(255,107,53,0.15); color: var(--hot); border: 1px solid rgba(255,107,53,0.3); }
+  .tag-cold { background: rgba(74,158,255,0.15); color: var(--cold); border: 1px solid rgba(74,158,255,0.3); }
+  .tag-gold { background: var(--gold-glow); color: var(--gold); border: 1px solid var(--border); }
+  .section-controls { display: flex; align-items: center; gap: 8px; }
+  .sort-select { background: var(--bg-surface); border: 1px solid var(--border-faint); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 12px; font-family: var(--font-mono); padding: 6px 10px; cursor: pointer; outline: none; transition: border-color 0.15s; }
+  .sort-select:hover { border-color: var(--border); color: var(--text-primary); }
+
+  /* ── Table ── */
+  .table-wrap { background: var(--bg-surface); border: 1px solid var(--border-faint); border-radius: var(--radius-lg); overflow: hidden; }
+  .leaderboard-table { width: 100%; border-collapse: collapse; }
+  .leaderboard-table thead th { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border-faint); background: var(--bg-card); white-space: nowrap; cursor: pointer; user-select: none; transition: color 0.15s; }
+  .leaderboard-table thead th:hover { color: var(--gold); }
+  .leaderboard-table thead th.sorted { color: var(--gold); }
+  .leaderboard-table thead th .sort-arrow { margin-left: 4px; opacity: 0.6; }
+  .leaderboard-table thead th.num-col { text-align: right; }
+  .leaderboard-table tbody tr { border-bottom: 1px solid var(--border-faint); transition: background 0.12s; cursor: pointer; }
+  .leaderboard-table tbody tr:last-child { border-bottom: none; }
+  .leaderboard-table tbody tr:hover { background: var(--bg-hover); }
+  .leaderboard-table td { padding: 13px 16px; font-size: 13px; vertical-align: middle; }
+  .leaderboard-table td.num-col { text-align: right; font-family: var(--font-mono); font-size: 13px; }
+  .rank-cell { font-family: var(--font-display); font-size: 20px; color: var(--text-dim); width: 40px; text-align: center; letter-spacing: 0; padding-right: 4px !important; }
+  .rank-cell.top3 { color: var(--gold); }
+  .player-cell { display: flex; align-items: center; gap: 12px; }
+  .player-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--bg-card); border: 1px solid var(--border-faint); display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 14px; color: var(--gold); flex-shrink: 0; overflow: hidden; }
+  .player-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+  .player-name { font-weight: 600; font-size: 14px; color: var(--text-primary); line-height: 1.2; }
+  .player-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
+  .level-badge { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; display: inline-block; letter-spacing: 0.5px; }
+  .level-aaa { background: rgba(212,160,23,0.15); color: var(--gold); border: 1px solid rgba(212,160,23,0.3); }
+  .level-aa  { background: rgba(74,158,255,0.12); color: #5BA4FF; border: 1px solid rgba(74,158,255,0.3); }
+  .level-aplus { background: rgba(160,74,255,0.12); color: #A04AFF; border: 1px solid rgba(160,74,255,0.3); }
+  .level-a   { background: rgba(45,212,160,0.1);  color: var(--green); border: 1px solid rgba(45,212,160,0.25); }
+  .stat-val { font-family: var(--font-mono); font-size: 13px; font-weight: 500; color: var(--text-primary); }
+  .stat-val.hot-stat { color: var(--hot); font-weight: 600; }
+  .hot-score-cell { font-family: var(--font-display); font-size: 18px; letter-spacing: 0.5px; }
+  .hot-score-high { color: var(--hot); }
+  .hot-score-mid  { color: var(--gold); }
+  .hot-score-low  { color: var(--text-muted); }
+  .hot-score-none { color: var(--text-dim); font-size: 12px; font-family: var(--font-mono); }
+  .trend-cell { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+  .trend-arrow { font-size: 16px; line-height: 1; }
+  .trend-up { color: var(--green); } .trend-down { color: var(--red); } .trend-flat { color: var(--text-dim); }
+  .price-cell { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+  .price-main { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .price-trend-badge { font-size: 10px; font-family: var(--font-mono); font-weight: 600; padding: 2px 6px; border-radius: 3px; letter-spacing: 0.3px; white-space: nowrap; }
+  .rising  { background: rgba(45,212,160,0.12); color: var(--green); }
+  .falling { background: rgba(226,75,74,0.12); color: var(--red); }
+  .stable  { background: rgba(122,132,153,0.15); color: var(--text-muted); }
+  .watch-btn { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border-faint); background: transparent; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 13px; transition: all 0.15s; flex-shrink: 0; }
+  .watch-btn:hover { border-color: var(--gold-dim); color: var(--gold); background: var(--gold-glow); }
+  .watch-btn.watching { color: var(--gold); border-color: var(--gold-dim); background: var(--gold-glow); }
+  .sparkline-mini { display: inline-block; vertical-align: middle; }
+
+  /* ── Skeletons ── */
+  @keyframes shimmer { 0% { background-position: -600px 0; } 100% { background-position: 600px 0; } }
+  .skeleton { background: linear-gradient(90deg, var(--bg-card) 0%, var(--bg-hover) 50%, var(--bg-card) 100%); background-size: 600px 100%; animation: shimmer 1.4s ease-in-out infinite; border-radius: 4px; }
+  .skeleton-row td { padding: 16px; }
+  .skeleton-player { display: flex; align-items: center; gap: 12px; }
+  .skeleton-avatar { width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; }
+  .skeleton-text { display: flex; flex-direction: column; gap: 6px; }
+  .skeleton-line { height: 10px; border-radius: 4px; }
+
+  /* ── Modal ── */
+  .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); align-items: center; justify-content: center; padding: 20px; }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: var(--bg-modal); border: 1px solid var(--border); border-radius: var(--radius-lg); width: 100%; max-width: 820px; max-height: 90vh; overflow-y: auto; position: relative; animation: modal-in 0.2s ease; }
+  .modal::-webkit-scrollbar { width: 4px; }
+  .modal::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  @keyframes modal-in { from { opacity:0; transform:translateY(16px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+  .modal-header { padding: 24px 24px 0; position: sticky; top: 0; background: var(--bg-modal); border-bottom: 1px solid var(--border-faint); padding-bottom: 18px; z-index: 10; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .modal-player-id { display: flex; align-items: center; gap: 16px; }
+  .modal-avatar { width: 60px; height: 60px; border-radius: 50%; background: var(--bg-card); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 24px; color: var(--gold); flex-shrink: 0; overflow: hidden; }
+  .modal-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+  .modal-player-name { font-family: var(--font-display); font-size: 28px; letter-spacing: 1px; line-height: 1; color: var(--text-primary); }
+  .modal-player-sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .modal-close { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border-faint); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; }
+  .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border); }
+  .modal-body { padding: 24px; }
+  .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .modal-stat-box { background: var(--bg-card); border: 1px solid var(--border-faint); border-radius: var(--radius-md); padding: 16px; }
+  .modal-stat-box-label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+  .modal-mini-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 20px; }
+  .mini-stat { background: var(--bg-card); border: 1px solid var(--border-faint); border-radius: var(--radius-sm); padding: 10px 8px; text-align: center; }
+  .mini-stat-val { font-family: var(--font-display); font-size: 20px; color: var(--gold); line-height: 1; }
+  .mini-stat-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
+  .chart-container { position: relative; width: 100%; height: 180px; }
+  .ebay-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--font-mono); }
+  .ebay-table thead th { color: var(--text-dim); font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; padding: 6px 8px; border-bottom: 1px solid var(--border-faint); text-align: left; }
+  .ebay-table thead th:last-child { text-align: right; }
+  .ebay-table tbody td { padding: 8px 8px; border-bottom: 1px solid var(--border-faint); color: var(--text-muted); }
+  .ebay-table tbody td:last-child { text-align: right; color: var(--text-primary); }
+  .ebay-table tbody tr:last-child td { border-bottom: none; }
+  .modal-footer { padding: 0 24px 24px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  /* ── Hot Score breakdown ── */
+  .score-breakdown {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 20px;
+  }
+  .score-component {
+    background: var(--bg-card); border: 1px solid var(--border-faint);
+    border-radius: var(--radius-sm); padding: 10px; text-align: center;
+  }
+  .score-component-val { font-family: var(--font-mono); font-size: 16px; font-weight: 600; color: var(--gold); }
+  .score-component-label { font-size: 9px; font-family: var(--font-mono); letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
+  .score-component-weight { font-size: 9px; color: var(--text-dim); margin-top: 1px; }
+
+  /* ── Watchlist panel ── */
+  .watchlist-panel { display: none; position: fixed; right: 0; top: var(--header-h); bottom: 0; width: 320px; background: var(--bg-surface); border-left: 1px solid var(--border); z-index: 90; flex-direction: column; animation: slide-in-right 0.2s ease; }
+  .watchlist-panel.open { display: flex; }
+  @keyframes slide-in-right { from { transform:translateX(100%); opacity:0; } to { transform:translateX(0); opacity:1; } }
+  .watchlist-header { padding: 18px 18px 14px; border-bottom: 1px solid var(--border-faint); display: flex; align-items: center; justify-content: space-between; }
+  .watchlist-title { font-family: var(--font-display); font-size: 18px; letter-spacing: 1px; color: var(--gold); }
+  .watchlist-body { flex: 1; overflow-y: auto; padding: 12px; }
+  .watchlist-body::-webkit-scrollbar { width: 3px; }
+  .watchlist-body::-webkit-scrollbar-thumb { background: var(--border); }
+  .watchlist-item { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-faint); margin-bottom: 8px; cursor: pointer; transition: background 0.12s; background: var(--bg-card); }
+  .watchlist-item:hover { background: var(--bg-hover); border-color: var(--border); }
+  .watchlist-item-name { font-size: 13px; font-weight: 600; line-height: 1.2; }
+  .watchlist-item-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .watchlist-item-price { margin-left: auto; font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--gold); flex-shrink: 0; }
+  .watchlist-empty { text-align: center; padding: 40px 20px; color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+  .watchlist-empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
+
+  /* ── Error / Empty ── */
+  .error-banner { background: rgba(226,75,74,0.08); border: 1px solid rgba(226,75,74,0.25); border-radius: var(--radius-md); padding: 12px 16px; font-size: 13px; color: var(--red); margin-bottom: 16px; align-items: center; gap: 8px; }
+  .empty-state { padding: 60px 20px; text-align: center; color: var(--text-dim); }
+  .empty-state-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.35; }
+  .empty-state-text { font-size: 14px; line-height: 1.6; }
+
+  /* ── Footer ── */
+  .footer { margin-left: var(--sidebar-w); padding: 16px 28px; border-top: 1px solid var(--border-faint); display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-family: var(--font-mono); color: var(--text-dim); flex-wrap: wrap; gap: 8px; }
+  .footer a { color: var(--gold-dim); text-decoration: none; }
+  .footer a:hover { color: var(--gold); }
+  .sidebar-toggle { display: none; position: fixed; bottom: 20px; left: 20px; z-index: 200; width: 44px; height: 44px; border-radius: 50%; background: var(--gold); border: none; cursor: pointer; color: #080B10; font-size: 18px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); align-items: center; justify-content: center; transition: background 0.15s; }
+  .sidebar-toggle:hover { background: var(--gold-bright); }
+  .tooltip { position: relative; }
+  .tooltip::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); font-size: 11px; padding: 4px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.12s; z-index: 50; font-family: var(--font-mono); }
+  .tooltip:hover::after { opacity: 1; }
+  .sep { color: var(--text-dim); }
+
+  /* ── Responsive ── */
+  @media (max-width: 1100px) { .stats-bar { grid-template-columns: repeat(2, 1fr); } .modal-grid { grid-template-columns: 1fr; } .modal-mini-stats { grid-template-columns: repeat(3, 1fr); } .score-breakdown { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 860px) { :root { --sidebar-w: 0px; } .sidebar { transform: translateX(-280px); width: 280px; min-width: 280px; } .sidebar.mobile-open { transform: translateX(0); } .main-content { margin-left: 0; } .footer { margin-left: 0; } .sidebar-toggle { display: flex; } .stats-bar { grid-template-columns: repeat(2, 1fr); } .col-ops, .col-sb, .col-wrc { display: none; } }
+  @media (max-width: 600px) { .main-content { padding: 16px; } .stats-bar { grid-template-columns: 1fr 1fr; gap: 8px; } .header { padding: 0 14px; } .modal-mini-stats { grid-template-columns: repeat(2, 1fr); } .watchlist-panel { width: 100%; } .col-hr, .col-price { display: none; } }
+  .main-content, .sidebar { animation: fade-up 0.3s ease both; }
+  .sidebar { animation-delay: 0.05s; }
+  @keyframes fade-up { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══════════════════════════════════════════════ -->
+<header class="header" role="banner">
+  <a href="#" class="header-brand">
+    <div class="brand-icon">M</div>
+    <div class="brand-name">MiLB <span>PROSPECTS</span></div>
+  </a>
+  <div class="header-center">
+    <div class="live-badge"><span class="live-dot"></span>Live Stats</div>
+    <span id="last-updated" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-left:8px;">—</span>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-ghost btn-icon tooltip" data-tip="Refresh data" id="refresh-btn" aria-label="Refresh">↻</button>
+    <button class="btn btn-ghost" id="watchlist-btn" aria-label="Open watchlist">★ Watchlist <span class="watchlist-count" id="watch-count">0</span></button>
+    <button class="btn btn-gold" id="export-btn">↓ Export</button>
+  </div>
+</header>
+
+<div class="app-body">
+
+  <!-- ═══ SIDEBAR ════════════════════════════════════════════ -->
+  <aside class="sidebar" id="sidebar" aria-label="Filters">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Mode</div>
+      <div class="hot-cold-toggle" role="group">
+        <button class="hc-btn hot active" data-mode="hot" aria-pressed="true">🔥 Hot</button>
+        <button class="hc-btn cold" data-mode="cold" aria-pressed="false">❄ Cold</button>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Window</div>
+      <div class="window-toggle" role="group">
+        <button class="window-btn" data-days="7">7D</button>
+        <button class="window-btn active" data-days="14">14D</button>
+        <button class="window-btn" data-days="30">30D</button>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Level</div>
+      <div class="filter-pills" role="group">
+        <button class="pill active" data-filter="level" data-val="all">All</button>
+        <button class="pill" data-filter="level" data-val="AAA">AAA</button>
+        <button class="pill" data-filter="level" data-val="AA">AA</button>
+        <button class="pill" data-filter="level" data-val="A+">A+</button>
+        <button class="pill" data-filter="level" data-val="A">A</button>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Position</div>
+      <div class="filter-pills" role="group">
+        <button class="pill active" data-filter="pos" data-val="all">All</button>
+        <button class="pill" data-filter="pos" data-val="C">C</button>
+        <button class="pill" data-filter="pos" data-val="1B">1B</button>
+        <button class="pill" data-filter="pos" data-val="2B">2B</button>
+        <button class="pill" data-filter="pos" data-val="3B">3B</button>
+        <button class="pill" data-filter="pos" data-val="SS">SS</button>
+        <button class="pill" data-filter="pos" data-val="OF">OF</button>
+        <button class="pill" data-filter="pos" data-val="DH">DH</button>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Organization</div>
+      <select class="select-styled" id="org-filter" aria-label="Organization">
+        <option value="all">All Organizations</option>
+      </select>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Max Age</div>
+      <div class="range-row">
+        <span style="font-family:var(--font-mono);font-size:13px;color:var(--gold);" id="age-display">26</span>
+        <input type="range" id="age-filter" min="18" max="35" value="26" />
+        <span style="font-size:11px;color:var(--text-dim);">yrs</span>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Min Plate Appearances</div>
+      <div class="range-row">
+        <span style="font-family:var(--font-mono);font-size:13px;color:var(--gold);" id="pa-display">20</span>
+        <input type="range" id="pa-filter" min="1" max="60" value="20" />
+        <span style="font-size:11px;color:var(--text-dim);">PA</span>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Min Hot Score</div>
+      <div class="range-row">
+        <span style="font-family:var(--font-mono);font-size:13px;color:var(--gold);" id="score-display">0</span>
+        <input type="range" id="score-filter" min="0" max="80" value="0" step="5" />
+        <span style="font-size:11px;color:var(--text-dim);">pts</span>
+      </div>
+    </div>
+    <div class="sidebar-section" style="border-bottom:none;">
+      <button class="reset-btn" id="reset-filters">↺ Reset all filters</button>
+    </div>
+  </aside>
+
+  <!-- ═══ MAIN ════════════════════════════════════════════════ -->
+  <main class="main-content" id="main-content">
+
+    <!-- Fetch progress -->
+    <div class="fetch-status" id="fetch-status">
+      <span class="fetch-status-dot"></span>
+      <span id="fetch-status-text">Loading players…</span>
+    </div>
+    <div class="fetch-progress" id="fetch-progress">
+      <div class="fetch-progress-bar" id="fetch-progress-bar"></div>
+    </div>
+
+    <!-- Error banner -->
+    <div class="error-banner" id="error-banner" role="alert" style="display:none;">
+      <span>⚠</span> <span id="error-message">Failed to load stats.</span>
+      <button class="btn btn-ghost btn-icon" id="retry-btn" style="margin-left:auto;">Retry</button>
+    </div>
+
+    <!-- Summary stats -->
+    <div class="stats-bar" role="region" aria-label="Summary stats">
+      <div class="stat-card">
+        <div class="stat-card-label">Players Tracked</div>
+        <div class="stat-card-value" id="stat-players">—</div>
+        <div class="stat-card-sub" id="stat-players-sub">across 4 levels</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-label">🔥 On Fire</div>
+        <div class="stat-card-value" id="stat-hot">—</div>
+        <div class="stat-card-sub">hot score ≥ 60</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-label">Avg Hot Score</div>
+        <div class="stat-card-value" id="stat-avg-score">—</div>
+        <div class="stat-card-sub" id="stat-score-sub">14-day window</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-label">Window Stats Ready</div>
+        <div class="stat-card-value" id="stat-window-ready">—</div>
+        <div class="stat-card-sub" id="stat-window-sub">loading in batches…</div>
+      </div>
+    </div>
+
+    <!-- Leaderboard -->
+    <section aria-label="Leaderboard">
+      <div class="section-header">
+        <h2 class="section-title">
+          Leaderboard
+          <span class="tag tag-hot" id="mode-tag">🔥 HOT</span>
+          <span class="tag tag-gold" id="window-tag">14D</span>
+        </h2>
+        <div class="section-controls">
+          <select class="sort-select" id="sort-select" aria-label="Sort by">
+            <option value="hotScore">Sort: Hot Score</option>
+            <option value="windowBA">Sort: Window BA</option>
+            <option value="windowOPS">Sort: Window OPS</option>
+            <option value="seasonBA">Sort: Season BA</option>
+            <option value="windowHR">Sort: HR</option>
+            <option value="windowSB">Sort: SB</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="leaderboard-table" id="leaderboard-table">
+          <thead>
+            <tr>
+              <th style="width:48px;text-align:center;">#</th>
+              <th style="min-width:180px;">Player</th>
+              <th class="num-col sorted" data-sort="hotScore">Score <span class="sort-arrow">↓</span></th>
+              <th class="num-col col-ba" data-sort="windowBA">BA <span class="sort-arrow"></span></th>
+              <th class="num-col col-ops" data-sort="windowOPS">OPS <span class="sort-arrow"></span></th>
+              <th class="num-col col-hr" data-sort="windowHR">HR <span class="sort-arrow"></span></th>
+              <th class="num-col col-sb" data-sort="windowSB">SB <span class="sort-arrow"></span></th>
+              <th class="num-col col-wrc" data-sort="seasonBA">S.BA <span class="sort-arrow"></span></th>
+              <th class="num-col" style="min-width:90px;">Trend</th>
+              <th style="width:36px;"></th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body">
+            <!-- Skeleton rows -->
+            <tr class="skeleton-row"><td><div class="skeleton" style="width:24px;height:20px;margin:auto;"></div></td><td><div class="skeleton-player"><div class="skeleton skeleton-avatar"></div><div class="skeleton-text"><div class="skeleton skeleton-line" style="width:130px;"></div><div class="skeleton skeleton-line" style="width:80px;"></div></div></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:45px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:50px;float:right;"></div></td><td></td></tr>
+            <tr class="skeleton-row"><td><div class="skeleton" style="width:24px;height:20px;margin:auto;"></div></td><td><div class="skeleton-player"><div class="skeleton skeleton-avatar"></div><div class="skeleton-text"><div class="skeleton skeleton-line" style="width:120px;"></div><div class="skeleton skeleton-line" style="width:90px;"></div></div></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:45px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:50px;float:right;"></div></td><td></td></tr>
+            <tr class="skeleton-row"><td><div class="skeleton" style="width:24px;height:20px;margin:auto;"></div></td><td><div class="skeleton-player"><div class="skeleton skeleton-avatar"></div><div class="skeleton-text"><div class="skeleton skeleton-line" style="width:110px;"></div><div class="skeleton skeleton-line" style="width:70px;"></div></div></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:45px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:50px;float:right;"></div></td><td></td></tr>
+            <tr class="skeleton-row"><td><div class="skeleton" style="width:24px;height:20px;margin:auto;"></div></td><td><div class="skeleton-player"><div class="skeleton skeleton-avatar"></div><div class="skeleton-text"><div class="skeleton skeleton-line" style="width:140px;"></div><div class="skeleton skeleton-line" style="width:85px;"></div></div></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:45px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:50px;float:right;"></div></td><td></td></tr>
+            <tr class="skeleton-row"><td><div class="skeleton" style="width:24px;height:20px;margin:auto;"></div></td><td><div class="skeleton-player"><div class="skeleton skeleton-avatar"></div><div class="skeleton-text"><div class="skeleton skeleton-line" style="width:100px;"></div><div class="skeleton skeleton-line" style="width:75px;"></div></div></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:45px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:20px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:40px;float:right;"></div></td><td><div class="skeleton skeleton-line" style="width:50px;float:right;"></div></td><td></td></tr>
+          </tbody>
+        </table>
+        <div class="empty-state" id="empty-state" style="display:none;">
+          <div class="empty-state-icon">⚾</div>
+          <div class="empty-state-text">No players match your filters.<br>Try widening the search.</div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;flex-wrap:wrap;gap:10px;">
+        <span style="font-size:12px;color:var(--text-dim);font-family:var(--font-mono);">
+          Showing <span id="showing-count">—</span> of <span id="total-count">—</span> players
+        </span>
+        <button class="btn btn-ghost" id="load-more-btn">Load 25 more ↓</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ═══ WATCHLIST PANEL ═════════════════════════════════════ -->
+<aside class="watchlist-panel" id="watchlist-panel" aria-label="Watchlist">
+  <div class="watchlist-header">
+    <div class="watchlist-title">★ Watchlist</div>
+    <button class="btn btn-ghost btn-icon" id="watchlist-close">✕</button>
+  </div>
+  <div class="watchlist-body" id="watchlist-body">
+    <div class="watchlist-empty" id="watchlist-empty">
+      <div class="watchlist-empty-icon">☆</div>
+      <div>No players on your watchlist yet.<br>Click ★ on any row to add them.</div>
+    </div>
+  </div>
+  <div style="padding:12px;border-top:1px solid var(--border-faint);">
+    <button class="btn btn-ghost" style="width:100%;justify-content:center;" id="clear-watchlist">Clear all</button>
+  </div>
+</aside>
+
+<!-- ═══ PLAYER MODAL ════════════════════════════════════════ -->
+<div class="modal-backdrop" id="player-modal" role="dialog" aria-modal="true" aria-labelledby="modal-player-name">
+  <div class="modal" id="modal-inner">
+    <div class="modal-header">
+      <div class="modal-player-id">
+        <div class="modal-avatar" id="modal-avatar">??</div>
+        <div>
+          <div class="modal-player-name" id="modal-player-name">Player Name</div>
+          <div class="modal-player-sub">
+            <span class="level-badge level-aaa" id="modal-level">AAA</span>
+            <span id="modal-org">—</span>
+            <span class="sep">·</span>
+            <span id="modal-pos">—</span>
+            <span class="sep">·</span>
+            <span id="modal-age">—</span>
+            <span class="sep">·</span>
+            <span id="modal-bats">B/T: —/—</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="btn btn-ghost" id="modal-watch-btn">☆ Watch</button>
+        <button class="modal-close" id="modal-close">✕</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <!-- Hot Score breakdown -->
+      <div class="score-breakdown" id="score-breakdown" role="region" aria-label="Hot score components">
+        <div class="score-component">
+          <div class="score-component-val" id="sc-total">—</div>
+          <div class="score-component-label">Hot Score</div>
+          <div class="score-component-weight">total</div>
+        </div>
+        <div class="score-component">
+          <div class="score-component-val" id="sc-ba">—</div>
+          <div class="score-component-label">BA Component</div>
+          <div class="score-component-weight">×40 weight</div>
+        </div>
+        <div class="score-component">
+          <div class="score-component-val" id="sc-ops">—</div>
+          <div class="score-component-label">OPS Component</div>
+          <div class="score-component-weight">×30 weight</div>
+        </div>
+        <div class="score-component">
+          <div class="score-component-val" id="sc-momentum">—</div>
+          <div class="score-component-label">Momentum</div>
+          <div class="score-component-weight">×20 + level ×10</div>
+        </div>
+      </div>
+
+      <!-- Key stats -->
+      <div class="modal-mini-stats" role="region" aria-label="Key stats">
+        <div class="mini-stat"><div class="mini-stat-val" id="ms-ba">.---</div><div class="mini-stat-label">BA (win)</div></div>
+        <div class="mini-stat"><div class="mini-stat-val" id="ms-ops">.---</div><div class="mini-stat-label">OPS (win)</div></div>
+        <div class="mini-stat"><div class="mini-stat-val" id="ms-hr">0</div><div class="mini-stat-label">HR (win)</div></div>
+        <div class="mini-stat"><div class="mini-stat-val" id="ms-sb">0</div><div class="mini-stat-label">SB (win)</div></div>
+        <div class="mini-stat"><div class="mini-stat-val" id="ms-pa">0</div><div class="mini-stat-label">PA (win)</div></div>
+      </div>
+
+      <!-- Charts -->
+      <div class="modal-grid">
+        <div class="modal-stat-box">
+          <div class="modal-stat-box-label">
+            <span>BA · Last 10 Games</span>
+            <span style="color:var(--text-dim);font-size:10px;" id="sparkline-trend-label">—</span>
+          </div>
+          <div class="chart-container">
+            <canvas id="sparkline-chart" role="img" aria-label="BA sparkline last 10 games">Batting average sparkline chart.</canvas>
+          </div>
+        </div>
+        <div class="modal-stat-box">
+          <div class="modal-stat-box-label">
+            <span>eBay Card Price</span>
+            <span id="price-trend-badge" class="price-trend-badge stable">—</span>
+          </div>
+          <div class="chart-container">
+            <canvas id="price-chart" role="img" aria-label="eBay price chart">Card price history chart.</canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Season stats -->
+      <div class="modal-stat-box" style="margin-bottom:16px;">
+        <div class="modal-stat-box-label">Full Season Stats</div>
+        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;text-align:center;">
+          <div><div style="font-family:var(--font-mono);font-size:16px;font-weight:600;" id="ss-g">—</div><div style="font-size:10px;color:var(--text-dim);font-family:var(--font-mono);margin-top:3px;">G</div></div>
+          <div><div style="font-family:var(--font-mono);font-size:16px;font-weight:600;" id="ss-avg">—</div><div style="font-size:10px;color:var(--text-dim);font-family:var(--font-mono);margin-top:3px;">AVG</div></div>
+          <div><div style="font-family:var(--font-mono);font-size:16px;font-weight:600;" id="ss-obp">—</div><div style="font-size:10px;color:var(--text-dim);font-family:var(--font-mono);margin-top:3px;">OBP</div></div>
+          <div><div style="font-family:var(--font-mono);font-size:16px;font-weight:600;" id="ss-slg">—</div><div style="font-size:10px;color:var(--text-dim);font-family:var(--font-mono);margin-top:3px;">SLG</div></div>
+          <div><div style="font-family:var(--font-mono);font-size:16px;font-weight:600;" id="ss-hr">—</div><div style="font-size:10px;color:var(--text-dim);font-family:var(--font-mono);margin-top:3px;">HR</div></div>
+          <div><div style="font-family:var(--font-mono);font-size:16px;font-weight:600;" id="ss-sb">—</div><div style="font-size:10px;color:var(--text-dim);font-family:var(--font-mono);margin-top:3px;">SB</div></div>
+        </div>
+      </div>
+
+      <!-- eBay table -->
+      <div class="modal-stat-box">
+        <div class="modal-stat-box-label">
+          <span>Recent eBay Sales</span>
+          <a href="#" id="ebay-search-link" target="_blank" rel="noopener" style="color:var(--gold-dim);font-size:10px;text-decoration:none;">View on eBay ↗</a>
+        </div>
+        <table class="ebay-table" aria-label="Recent eBay sales">
+          <thead><tr><th>Date</th><th>Description</th><th>Grade</th><th>Price</th></tr></thead>
+          <tbody id="ebay-sales-body"><tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:16px;">eBay integration coming soon</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-gold" id="modal-watch-footer">☆ Add to Watchlist</button>
+      <a href="#" id="mlb-profile-link" class="btn btn-ghost" target="_blank" rel="noopener">MLB Profile ↗</a>
+      <a href="#" id="ebay-link" class="btn btn-ghost" target="_blank" rel="noopener">Search eBay ↗</a>
+      <div style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="modal-data-note">Stats via MLB Stats API</div>
+    </div>
+  </div>
+</div>
+
+<button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle filters">⊞</button>
+
+<footer class="footer">
+  <span>MiLB Hot Prospects Tracker · Stats: <a href="https://statsapi.mlb.com" target="_blank" rel="noopener">MLB Stats API</a> · Prices: eBay (coming soon)</span>
+  <span>Refreshes daily at 6AM ET · Not affiliated with MLB · Built for collectors 🃏</span>
+</footer>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════
+const CONFIG = {
+  // Base URL — no API key required, CORS-open from browser
+  // Docs: https://statsapi.mlb.com/api/v1/
+  MLB_BASE: 'https://statsapi.mlb.com/api/v1',
+
+  // MiLB sport IDs
+  // GET https://statsapi.mlb.com/api/v1/sports returns the full list
+  SPORT_IDS: { AAA: 11, AA: 12, 'A+': 13, A: 14 },
+
+  // How many leaders to fetch per level per call
+  // GET /api/v1/stats?stats=season&group=hitting&sportId={id}&season={year}&limit=50
+  LEADERS_LIMIT: 50,
+
+  SEASON: new Date().getFullYear(),
+
+  // Concurrent window-stat requests per batch
+  // Keeps MLB API happy — more than ~8 simultaneous will get soft-throttled
+  BATCH_SIZE: 5,
+
+  // Minimum plate appearances in the window to include in hot score calc
+  // Prevents 2-PA flukes showing .500 BA at the top
+  MIN_PA_WINDOW: 20,
+
+  // Hot score formula weights (must sum to 100)
+  HS_WEIGHTS: { ba: 40, ops: 30, momentum: 20, level: 10 },
+
+  // Level score multipliers — AAA performance worth more for card valuation
+  LEVEL_MULT: { AAA: 1.0, AA: 0.85, 'A+': 0.70, A: 0.55 },
+
+  // MLB player photo URL — mlbstatic.com serves headshots by player ID
+  PHOTO_URL: id => `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_180,q_auto:best/v1/people/${id}/headshot/67/current`,
+
+  // Cloudflare Worker URL — update this after running `wrangler deploy`
+  // The Worker injects the eBay OAuth token server-side.
+  // While waiting for eBay developer approval, the Worker returns mock data.
+  // See worker/ebay-proxy.js and README.md for setup instructions.
+  WORKER_URL: 'https://milb-ebay-proxy.yourusername.workers.dev',
+
+  // Cache TTLs in ms — stored in localStorage with prefix 'milb_'
+  CACHE_TTL: {
+    leaders:    30 * 60 * 1000,         // 30 min (refreshed at 6am ET daily)
+    window:     60 * 60 * 1000,         // 60 min
+    gamelog:    60 * 60 * 1000,         // 60 min
+    profile:    24 * 60 * 60 * 1000,    // 24 hours (age/position rarely changes)
+    team_map:   24 * 60 * 60 * 1000,    // 24 hours
+    ebay:       4  * 60 * 60 * 1000,    // 4 hours (card prices don't move fast)
+  },
+
+  PAGE_SIZE: 25,
+};
+
+// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════
+const state = {
+  mode:       'hot',
+  windowDays: 14,
+  level:      'all',
+  position:   'all',
+  org:        'all',
+  maxAge:     26,
+  minPA:      20,
+  minScore:   0,
+  sortBy:     'hotScore',
+  sortDir:    'desc',
+  page:       0,
+
+  players:    [],   // all normalized players
+  filtered:   [],   // post-filter/sort slice
+  teamMap:    {},   // affiliateTeamId → { parentOrg, parentOrgId, level }
+
+  watchlist:  new Set(),
+  loading:    false,
+  windowLoaded: 0,  // count of players who have window stats
+
+  sparklineChart: null,
+  priceChart:     null,
+};
+
+// ═══════════════════════════════════════════════════════════════
+// CACHE LAYER
+// ═══════════════════════════════════════════════════════════════
+
+function cacheGet(key, ttl) {
+  try {
+    const raw = localStorage.getItem('milb_' + key);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw);
+    if (Date.now() - ts > ttl) return null;
+    return data;
+  } catch { return null; }
+}
+
+function cacheSet(key, data) {
+  try {
+    localStorage.setItem('milb_' + key, JSON.stringify({ ts: Date.now(), data }));
+  } catch (e) {
+    // Quota exceeded — clear old entries and retry once
+    clearOldCache();
+    try { localStorage.setItem('milb_' + key, JSON.stringify({ ts: Date.now(), data })); } catch {}
+  }
+}
+
+function clearOldCache() {
+  Object.keys(localStorage)
+    .filter(k => k.startsWith('milb_') && !k.includes('watchlist') && !k.includes('meta'))
+    .forEach(k => localStorage.removeItem(k));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 6AM ET REFRESH LOGIC
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Returns the UTC offset string for Eastern Time, accounting for DST.
+ * EST = UTC-5 (Nov–Mar), EDT = UTC-4 (Mar–Nov).
+ * We detect which is active by comparing UTC vs ET parse of the same moment.
+ * This lets the browser's Intl engine handle DST switchover dates automatically.
+ */
+function getETOffset(date) {
+  const utcStr = date.toLocaleString('en-US', { timeZone: 'UTC' });
+  const etStr  = date.toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const diffHrs = (new Date(utcStr) - new Date(etStr)) / (1000 * 60 * 60);
+  return diffHrs === 5 ? '-05:00' : '-04:00'; // EST vs EDT
+}
+
+/**
+ * Returns true if the leaders data needs to be re-fetched.
+ * Rules:
+ *   1. Never fetched before → true
+ *   2. Last fetch was before today's 6am ET AND it's now past 6am ET → true
+ *   3. Last fetch was before yesterday's 6am ET → always true (>24h stale)
+ */
+function needsRefresh(lastFetchTimestamp) {
+  if (!lastFetchTimestamp) return true;
+
+  const now  = new Date();
+  const last = new Date(lastFetchTimestamp);
+
+  const offset = getETOffset(now);
+
+  // Build today's 6:00:00 AM ET as a proper ISO string with ET offset
+  // Intl gives us the ET date parts (year/month/day) for "now"
+  const etParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+
+  const get = type => etParts.find(p => p.type === type).value;
+  const sixAMET = new Date(`${get('year')}-${get('month')}-${get('day')}T06:00:00${offset}`);
+
+  // Case 1: It's past 6am ET today AND last fetch predates today's 6am → stale
+  if (now >= sixAMET && last < sixAMET) return true;
+
+  // Case 2: Last fetch predates yesterday's 6am ET → always stale
+  const sixAMYesterdayET = new Date(sixAMET);
+  sixAMYesterdayET.setDate(sixAMYesterdayET.getDate() - 1);
+  if (last < sixAMYesterdayET) return true;
+
+  return false;
+}
+
+/** Date string helpers */
+function dateStr(d) { return d.toISOString().split('T')[0]; }
+function today()    { return dateStr(new Date()); }
+function windowStartDate(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return dateStr(d);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FETCH HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Generic fetch with localStorage cache.
+ * @param {string} url       - Full MLB Stats API URL
+ * @param {string} cacheKey  - Storage key (without 'milb_' prefix)
+ * @param {number} ttl       - Cache TTL in ms
+ */
+async function fetchCached(url, cacheKey, ttl) {
+  const cached = cacheGet(cacheKey, ttl);
+  if (cached !== null) return cached;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`MLB API ${res.status}: ${url}`);
+  const data = await res.json();
+  cacheSet(cacheKey, data);
+  return data;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TEAM MAP  (affiliate team ID → parent org info)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Fetches all MiLB teams and builds a lookup map.
+ * GET https://statsapi.mlb.com/api/v1/teams?sportIds=11,12,13,14&season={year}
+ *
+ * Returns: Map<number, { parentOrg, parentOrgId, level }>
+ * where the key is the affiliate team ID (e.g. 565 = Norfolk Tides).
+ *
+ * We need this because the hitting leaders endpoint returns the affiliate
+ * team name ("Norfolk Tides"), not the MLB parent org ("Baltimore Orioles").
+ */
+async function buildTeamMap() {
+  const year = CONFIG.SEASON;
+  const url  = `${CONFIG.MLB_BASE}/teams?sportIds=11,12,13,14&season=${year}`;
+  const data = await fetchCached(url, `team_map_${year}`, CONFIG.CACHE_TTL.team_map);
+
+  const map = {};
+  (data.teams || []).forEach(t => {
+    // sportId → level label
+    const levelMap = { 11: 'AAA', 12: 'AA', 13: 'A+', 14: 'A' };
+    map[t.id] = {
+      parentOrg:   t.parentOrgName || t.name,
+      parentOrgId: t.parentOrgId   || t.id,
+      level:       levelMap[t.sport?.id] || '?',
+    };
+  });
+  return map;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LEADERS FETCH  (season hitting stats, top N per level)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Fetches top hitters for one level, sorted by OPS (broad quality signal).
+ *
+ * Endpoint:
+ *   GET https://statsapi.mlb.com/api/v1/stats
+ *     ?stats=season
+ *     &group=hitting
+ *     &sportId={sportId}
+ *     &season={year}
+ *     &limit={N}
+ *     &sortStat=onBasePlusSlugging
+ *     &playerPool=qualified
+ *
+ * Response shape (relevant fields):
+ * {
+ *   stats: [{
+ *     splits: [{
+ *       player: { id, fullName },
+ *       team:   { id, name },         ← affiliate team
+ *       stat:   {
+ *         avg, obp, slg, ops,
+ *         gamesPlayed, homeRuns, stolenBases, rbi,
+ *         atBats, hits, plateAppearances, strikeOuts
+ *       }
+ *     }]
+ *   }]
+ * }
+ *
+ * @param {number} sportId    - e.g. 11 for AAA
+ * @param {string} levelName  - e.g. 'AAA'
+ * @param {object} teamMap    - from buildTeamMap()
+ * @returns {object[]}        - array of normalized player objects
+ */
+async function fetchLeaders(sportId, levelName, teamMap) {
+  const year = CONFIG.SEASON;
+  const url  = `${CONFIG.MLB_BASE}/stats`
+    + `?stats=season`
+    + `&group=hitting`
+    + `&sportId=${sportId}`
+    + `&season=${year}`
+    + `&limit=${CONFIG.LEADERS_LIMIT}`
+    + `&sortStat=onBasePlusSlugging`
+    + `&playerPool=qualified`;
+
+  const cacheKey = `leaders_${sportId}_${year}`;
+  const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.leaders);
+  const splits = data.stats?.[0]?.splits || [];
+
+  return splits.map(split => normalizePlayer(split, levelName, teamMap));
+}
+
+/**
+ * Maps a raw MLB Stats API split object to our internal player model.
+ * All stat strings (avg = ".320") are parsed to floats here once.
+ */
+function normalizePlayer(split, levelName, teamMap) {
+  const p   = split.player || {};
+  const t   = split.team   || {};
+  const s   = split.stat   || {};
+  const org = teamMap[t.id] || {};
+
+  return {
+    id:           p.id,
+    name:         p.fullName || 'Unknown',
+    affiliateId:  t.id,
+    affiliateName: t.name || '—',
+    parentOrg:    org.parentOrg    || t.name || '—',
+    parentOrgId:  org.parentOrgId  || null,
+    level:        levelName,
+
+    // Season stats (available immediately from leaders call)
+    seasonG:    s.gamesPlayed      || 0,
+    seasonBA:   parseFloat(s.avg)  || 0,
+    seasonOBP:  parseFloat(s.obp)  || 0,
+    seasonSLG:  parseFloat(s.slg)  || 0,
+    seasonOPS:  parseFloat(s.ops)  || 0,
+    seasonHR:   s.homeRuns         || 0,
+    seasonSB:   s.stolenBases      || 0,
+    seasonRBI:  s.rbi              || 0,
+    seasonPA:   s.plateAppearances || 0,
+    seasonAB:   s.atBats           || 0,
+    seasonHits: s.hits             || 0,
+
+    // Window stats — populated later by batchFetchWindowStats()
+    windowBA:   null,
+    windowOPS:  null,
+    windowOBP:  null,
+    windowSLG:  null,
+    windowHR:   null,
+    windowSB:   null,
+    windowPA:   null,
+
+    // Per-game log — populated lazily on modal open
+    recentBA:   [],
+
+    // Hot score — calculated after window stats arrive
+    hotScore:      null,
+    momentumScore: null,
+    baScore:       null,
+    opsScore:      null,
+    levelScore:    null,
+
+    // Profile — populated lazily on modal open
+    position:  null,
+    age:       null,
+    bats:      null,
+    throws:    null,
+
+    // eBay — populated lazily (future integration)
+    cardPrice:      null,
+    recentPrices:   [],
+    cardPriceTrend: null,
+    ebayListings:   null,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WINDOW STATS  (14-day rolling BA, OPS, HR, SB)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Fetches hitting stats for a player over the current window (e.g. last 14 days).
+ *
+ * Endpoint:
+ *   GET https://statsapi.mlb.com/api/v1/people/{id}/stats
+ *     ?stats=byDateRange
+ *     &group=hitting
+ *     &startDate=YYYY-MM-DD
+ *     &endDate=YYYY-MM-DD
+ *
+ * Response shape:
+ * {
+ *   stats: [{
+ *     splits: [{
+ *       stat: { avg, obp, slg, ops, homeRuns, stolenBases, plateAppearances }
+ *     }]
+ *   }]
+ * }
+ *
+ * Returns null if no data available (player had no games in the window).
+ */
+async function fetchWindowStats(playerId, startDate, endDate) {
+  const url = `${CONFIG.MLB_BASE}/people/${playerId}/stats`
+    + `?stats=byDateRange`
+    + `&group=hitting`
+    + `&startDate=${startDate}`
+    + `&endDate=${endDate}`;
+
+  const cacheKey = `window_${playerId}_${startDate}_${endDate}`;
+  const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.window);
+
+  const split = data.stats?.[0]?.splits?.[0]?.stat;
+  if (!split) return null;
+
+  return {
+    ba:  parseFloat(split.avg) || 0,
+    obp: parseFloat(split.obp) || 0,
+    slg: parseFloat(split.slg) || 0,
+    ops: parseFloat(split.ops) || 0,
+    hr:  split.homeRuns         || 0,
+    sb:  split.stolenBases      || 0,
+    pa:  split.plateAppearances || 0,
+  };
+}
+
+/**
+ * Batches window stat fetches across all players, 5 at a time.
+ * After each batch completes, recalculates hot scores and re-renders
+ * the leaderboard so users see data populate progressively.
+ *
+ * Only fetches for players who pass the min PA filter to avoid wasted calls
+ * on players with no recent games (e.g. IL stints).
+ */
+async function batchFetchWindowStats(players) {
+  const start = windowStartDate(state.windowDays);
+  const end   = today();
+  const total = players.length;
+  let done = 0;
+
+  setProgress(10); // base progress after leaders loaded
+
+  for (let i = 0; i < players.length; i += CONFIG.BATCH_SIZE) {
+    const batch = players.slice(i, i + CONFIG.BATCH_SIZE);
+
+    await Promise.all(batch.map(async player => {
+      try {
+        const stats = await fetchWindowStats(player.id, start, end);
+        if (stats && stats.pa >= CONFIG.MIN_PA_WINDOW) {
+          player.windowBA  = stats.ba;
+          player.windowOPS = stats.ops;
+          player.windowOBP = stats.obp;
+          player.windowSLG = stats.slg;
+          player.windowHR  = stats.hr;
+          player.windowSB  = stats.sb;
+          player.windowPA  = stats.pa;
+          calcHotScore(player);
+          state.windowLoaded++;
+        }
+      } catch (err) {
+        // Individual player failure is non-fatal — log and continue
+        console.warn(`Window stats failed for ${player.name} (${player.id}):`, err.message);
+      } finally {
+        done++;
+      }
+    }));
+
+    // Progressive re-render after each batch
+    setProgress(10 + Math.round((done / total) * 85));
+    setFetchStatus(`Loading window stats… ${done}/${total} players`);
+    applyFilters();
+    renderLeaderboard();
+    renderSummaryStats();
+  }
+
+  setProgress(100);
+  setTimeout(() => hideFetchUI(), 800);
+  setFetchStatus(`Done — ${state.windowLoaded} players with ${state.windowDays}-day stats`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HOT SCORE CALCULATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Computes the momentum bonus (0–1) by comparing per-game BA in the
+ * last 5 games vs the prior games within the window.
+ *
+ * Returns 0.5 (neutral) if there aren't enough games to compare.
+ * Returns > 0.5 if the player is heating up, < 0.5 if cooling.
+ *
+ * Delta range: -0.100 → 0 (coldest), +0.100 → 1 (hottest).
+ * This is intentionally tight — a .050 improvement in recent BA is meaningful.
+ */
+function momentumBonus(recentBAValues) {
+  if (!recentBAValues || recentBAValues.length < 5) return 0.5;
+
+  const recent = recentBAValues.slice(-5);
+  const prior  = recentBAValues.slice(0, -5);
+  if (prior.length < 3) return 0.5;
+
+  const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const delta = mean(recent) - mean(prior);
+
+  // Clamp to [-0.100, +0.100] then normalize to [0, 1]
+  return Math.max(0, Math.min(1, (delta + 0.100) / 0.200));
+}
+
+/**
+ * Calculates the composite hot score for a player and stores
+ * each component on the player object for display in the modal.
+ *
+ * Formula:
+ *   hotScore = (windowBA × 40) + (windowOPS × 30) + (momentumBonus × 20) + (levelMult × 10)
+ *
+ * Theoretical max: ~.450 × 40 + 1.200 × 30 + 1.0 × 20 + 1.0 × 10 = 94
+ * Elite hot streak range: 65–80
+ * Average qualified player: 35–50
+ *
+ * Mutates the player object in place — no return value needed.
+ */
+function calcHotScore(player) {
+  if (!player.windowBA || !player.windowOPS) {
+    player.hotScore = null;
+    return;
+  }
+
+  const w = CONFIG.HS_WEIGHTS;
+  const levelMult = CONFIG.LEVEL_MULT[player.level] ?? 0.70;
+
+  const baComp       = player.windowBA  * w.ba;
+  const opsComp      = player.windowOPS * w.ops;
+  const momBonus     = momentumBonus(player.recentBA);
+  const momentumComp = momBonus * w.momentum;
+  const levelComp    = levelMult * w.level;
+
+  player.baScore       = parseFloat(baComp.toFixed(2));
+  player.opsScore      = parseFloat(opsComp.toFixed(2));
+  player.momentumScore = parseFloat(momentumComp.toFixed(2));
+  player.levelScore    = parseFloat(levelComp.toFixed(2));
+  player.hotScore      = parseFloat((baComp + opsComp + momentumComp + levelComp).toFixed(2));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LAZY-LOADED DATA  (fetched on modal open only)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Fetches per-game hitting log for the current season.
+ * Used to draw the BA sparkline in the modal.
+ *
+ * Endpoint:
+ *   GET https://statsapi.mlb.com/api/v1/people/{id}/stats
+ *     ?stats=gameLog
+ *     &group=hitting
+ *     &season={year}
+ *
+ * Each split contains per-game totals (hits, atBats for that game, not cumulative).
+ * We calculate per-game BA as hits/atBats to feed the sparkline.
+ * Returns last 10 games.
+ */
+async function fetchGameLog(playerId) {
+  const year = CONFIG.SEASON;
+  const url  = `${CONFIG.MLB_BASE}/people/${playerId}/stats`
+    + `?stats=gameLog`
+    + `&group=hitting`
+    + `&season=${year}`;
+
+  const cacheKey = `gamelog_${playerId}_${year}`;
+  const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.gamelog);
+  const splits = data.stats?.[0]?.splits || [];
+
+  // Calculate per-game BA from per-game H/AB (not cumulative avg)
+  return splits
+    .slice(-10)
+    .map(split => {
+      const ab   = split.stat?.atBats || 0;
+      const hits  = split.stat?.hits   || 0;
+      return ab > 0 ? parseFloat((hits / ab).toFixed(3)) : 0;
+    });
+}
+
+/**
+ * Fetches age, position, bats, and throws for a player.
+ *
+ * Endpoint:
+ *   GET https://statsapi.mlb.com/api/v1/people/{id}
+ *     ?hydrate=currentTeam
+ *
+ * Response:
+ * {
+ *   people: [{
+ *     currentAge: 21,
+ *     primaryPosition: { abbreviation: 'SS' },
+ *     batSide:   { code: 'L' },
+ *     pitchHand: { code: 'R' }
+ *   }]
+ * }
+ */
+async function fetchPlayerProfile(playerId) {
+  const url = `${CONFIG.MLB_BASE}/people/${playerId}?hydrate=currentTeam`;
+  const cacheKey = `profile_${playerId}`;
+  const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.profile);
+  const person = data.people?.[0] || {};
+
+  return {
+    age:      person.currentAge                       || null,
+    position: person.primaryPosition?.abbreviation    || null,
+    bats:     person.batSide?.code                    || null,
+    throws:   person.pitchHand?.code                  || null,
+  };
+}
+
+/**
+ * Fetches eBay card prices via the Cloudflare Worker proxy.
+ *
+ * The Worker (worker/ebay-proxy.js) handles:
+ *   - eBay OAuth token management (auto-refresh every 2 hours)
+ *   - CORS headers (eBay blocks direct browser requests)
+ *   - Mock data when credentials aren't set yet
+ *
+ * Our Worker endpoint:
+ *   GET {WORKER_URL}?q={playerName}&limit=10
+ *
+ * Returns: { items[], total, source: 'ebay_live' | 'mock' }
+ *
+ * Results are cached 4 hours in localStorage — eBay prices don't
+ * change minute-to-minute and we want to conserve the daily API quota.
+ *
+ * @param {string} playerName — e.g. "Jackson Holliday"
+ * @returns {{ items: object[], total: number, source: string } | null}
+ */
+async function fetchEbayPrices(playerName) {
+  const cacheKey = `ebay_${playerName.toLowerCase().replace(/\s+/g, '_')}`;
+  const cached   = cacheGet(cacheKey, CONFIG.CACHE_TTL.ebay);
+  if (cached) return cached;
+
+  try {
+    const url = `${CONFIG.WORKER_URL}?q=${encodeURIComponent(playerName)}&limit=10`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Worker responded ${res.status}`);
+    const data = await res.json();
+    cacheSet(cacheKey, data);
+    return data;
+  } catch (err) {
+    console.warn(`eBay fetch failed for ${playerName}:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Extracts an array of prices from eBay response items for the price chart.
+ * Sorted oldest → newest so the chart reads left to right chronologically.
+ */
+function extractPrices(items = []) {
+  return items
+    .filter(item => item.price > 0)
+    .sort((a, b) => new Date(a.listingDate) - new Date(b.listingDate))
+    .map(item => item.price);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN DATA ORCHESTRATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Full data load pipeline:
+ *   1. Build team map (affiliate → parent org)
+ *   2. Fetch leaders for all 4 levels in parallel
+ *   3. Merge, dedupe, initial render with season stats
+ *   4. Batch-fetch 14-day window stats (5 at a time)
+ *   5. Re-sort and re-render progressively as batches complete
+ */
+async function loadData() {
+  if (state.loading) return;
+  state.loading = true;
+  state.windowLoaded = 0;
+  showError(false);
+  showFetchUI(true);
+  setFetchStatus('Building team index…');
+  setProgress(2);
+
+  try {
+    // Step 1: Team map — affiliate ID → parent org name
+    // GET https://statsapi.mlb.com/api/v1/teams?sportIds=11,12,13,14&season={year}
+    state.teamMap = await buildTeamMap();
+    setProgress(5);
+    setFetchStatus('Fetching leaders from all 4 levels…');
+
+    // Step 2: Leaders for AAA, AA, A+, A — all in parallel
+    // GET https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting&sportId={id}&...
+    const [aaaPlayers, aaPlayers, aPlusPlayers, aPlayers] = await Promise.all([
+      fetchLeaders(CONFIG.SPORT_IDS.AAA,  'AAA',  state.teamMap),
+      fetchLeaders(CONFIG.SPORT_IDS.AA,   'AA',   state.teamMap),
+      fetchLeaders(CONFIG.SPORT_IDS['A+'],'A+',   state.teamMap),
+      fetchLeaders(CONFIG.SPORT_IDS.A,    'A',    state.teamMap),
+    ]);
+
+    setProgress(10);
+    setFetchStatus('Leaders loaded — calculating initial rankings…');
+
+    // Merge all levels, dedupe by player ID (player may appear at multiple levels
+    // if they were recently promoted — keep the most recent/higher level entry)
+    const seen = new Set();
+    const allPlayers = [...aaaPlayers, ...aaPlayers, ...aPlusPlayers, ...aPlayers]
+      .filter(p => {
+        if (!p.id || seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      });
+
+    state.players = allPlayers;
+
+    // Initial render with season stats only (window stats null → hot score null)
+    applyFilters();
+    renderLeaderboard();
+    renderSummaryStats();
+    populateOrgFilter();
+
+    // Update last-refreshed timestamp
+    const now = new Date();
+    document.getElementById('last-updated').textContent =
+      'Refreshed: ' + now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+    // Save fetch timestamp to meta for 6am ET gate
+    localStorage.setItem('milb_meta', JSON.stringify({ lastFetch: Date.now() }));
+
+    // Cache full player array (season stats only — window stats filled per session)
+    cacheSet('players_season', allPlayers);
+
+    // Step 3: Batch-fetch 14-day window stats
+    // This mutates state.players in place, recalculating hot scores as data arrives
+    setFetchStatus(`Fetching ${state.windowDays}-day window stats in batches…`);
+    await batchFetchWindowStats(state.players);
+
+  } catch (err) {
+    console.error('loadData error:', err);
+    showError(true, `Failed to load stats: ${err.message}`);
+    showFetchUI(false);
+  } finally {
+    state.loading = false;
+  }
+}
+
+/**
+ * Restore leaderboard from localStorage cache (skips API calls).
+ * Called on app load when needsRefresh() returns false.
+ * Window stats won't be in the session cache so we still batch-fetch those.
+ */
+async function loadFromCache() {
+  const players = cacheGet('players_season', CONFIG.CACHE_TTL.leaders * 48); // generous TTL for cache restore
+  if (!players || players.length === 0) {
+    // Cache miss — full reload
+    return loadData();
+  }
+
+  state.teamMap = await buildTeamMap();
+  state.players = players;
+  applyFilters();
+  renderLeaderboard();
+  renderSummaryStats();
+  populateOrgFilter();
+
+  const meta = JSON.parse(localStorage.getItem('milb_meta') || '{}');
+  if (meta.lastFetch) {
+    document.getElementById('last-updated').textContent =
+      'Refreshed: ' + new Date(meta.lastFetch).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  // Window stats still need fetching fresh this session
+  showFetchUI(true);
+  await batchFetchWindowStats(state.players);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FILTER & SORT
+// ═══════════════════════════════════════════════════════════════
+
+function applyFilters() {
+  let list = [...state.players];
+
+  if (state.level !== 'all') {
+    list = list.filter(p => p.level === state.level);
+  }
+  if (state.position !== 'all') {
+    list = list.filter(p => p.position === state.position);
+  }
+  if (state.org !== 'all') {
+    list = list.filter(p => String(p.parentOrgId) === String(state.org));
+  }
+  if (state.maxAge < 35) {
+    list = list.filter(p => !p.age || p.age <= state.maxAge);
+  }
+  if (state.minPA > 0) {
+    list = list.filter(p => !p.windowPA || p.windowPA >= state.minPA);
+  }
+  if (state.minScore > 0) {
+    list = list.filter(p => p.hotScore != null && p.hotScore >= state.minScore);
+  }
+
+  // Hot mode: players with window stats that qualify
+  // Cold mode: players below 0.270 BA and 0.700 OPS in the window
+  if (state.mode === 'hot') {
+    list = list.filter(p => p.hotScore != null || p.windowBA == null);
+  } else {
+    list = list.filter(p =>
+      p.windowBA != null && p.windowBA < 0.270 && p.windowOPS < 0.700
+    );
+  }
+
+  // Sort — players with null hotScore go to the bottom
+  list.sort((a, b) => {
+    const dir = state.sortDir === 'desc' ? -1 : 1;
+    const va = a[state.sortBy] ?? (state.sortDir === 'desc' ? -Infinity : Infinity);
+    const vb = b[state.sortBy] ?? (state.sortDir === 'desc' ? -Infinity : Infinity);
+    return (va > vb ? 1 : va < vb ? -1 : 0) * dir;
+  });
+
+  state.filtered = list;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENDER LEADERBOARD
+// ═══════════════════════════════════════════════════════════════
+
+function fmtBA(n)    { if (n == null || isNaN(n)) return '.---'; return '.' + Math.round(n * 1000).toString().padStart(3, '0').slice(-3); }
+function fmtOPS(n)   { if (n == null || isNaN(n)) return '.---'; return n.toFixed(3); }
+function fmtPrice(n) { if (n == null || isNaN(n)) return '—'; return '$' + n.toFixed(2); }
+function initials(name) { return (name || '??').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
+function levelClass(lvl) { return { AAA: 'level-aaa', AA: 'level-aa', 'A+': 'level-aplus', A: 'level-a' }[lvl] || 'level-a'; }
+
+function baTrend(vals) {
+  if (!vals || vals.length < 4) return 'flat';
+  const recent = vals.slice(-3).filter(v => v > 0);
+  const prior  = vals.slice(0, 3).filter(v => v > 0);
+  if (!recent.length || !prior.length) return 'flat';
+  const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const delta = avg(recent) - avg(prior);
+  if (delta > 0.030) return 'up';
+  if (delta < -0.030) return 'down';
+  return 'flat';
+}
+
+function hotScoreClass(score) {
+  if (score == null) return 'hot-score-none';
+  if (score >= 60) return 'hot-score-high';
+  if (score >= 40) return 'hot-score-mid';
+  return 'hot-score-low';
+}
+
+function renderLeaderboard() {
+  const tbody     = document.getElementById('leaderboard-body');
+  const emptyEl   = document.getElementById('empty-state');
+  const slice     = state.filtered.slice(0, (state.page + 1) * CONFIG.PAGE_SIZE);
+
+  if (slice.length === 0) {
+    tbody.innerHTML = '';
+    emptyEl.style.display = 'block';
+    document.getElementById('showing-count').textContent = '0';
+    document.getElementById('total-count').textContent   = state.filtered.length;
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  tbody.innerHTML = slice.map((p, i) => {
+    const rank     = i + 1;
+    const rankCls  = rank <= 3 ? 'rank-cell top3' : 'rank-cell';
+    const lvlCls   = levelClass(p.level);
+    const trend    = baTrend(p.recentBA);
+    const trendArrow = { up: '↑', down: '↓', flat: '→' }[trend];
+    const trendCls   = { up: 'trend-up', down: 'trend-down', flat: 'trend-flat' }[trend];
+    const watching   = state.watchlist.has(p.id);
+    const scoreCls   = hotScoreClass(p.hotScore);
+    const scoreDisp  = p.hotScore != null ? p.hotScore.toFixed(1) : '—';
+    const baHot      = p.windowBA != null && p.windowBA >= 0.330;
+
+    // MLB photo — falls back to initials on error via onerror
+    const photoSrc = CONFIG.PHOTO_URL(p.id);
+
+    return `
+    <tr data-player-id="${p.id}" role="row" tabindex="0">
+      <td class="${rankCls}">${rank}</td>
+      <td>
+        <div class="player-cell">
+          <div class="player-avatar">
+            <img src="${photoSrc}" alt="${p.name}"
+              loading="lazy"
+              onerror="this.style.display='none';this.parentElement.textContent='${initials(p.name)}'"/>
+          </div>
+          <div>
+            <div class="player-name">${p.name}</div>
+            <div class="player-meta">
+              <span class="level-badge ${lvlCls}">${p.level}</span>
+              <span>${p.parentOrg}</span>
+              ${p.position ? `<span class="sep">·</span><span>${p.position}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      </td>
+      <td class="num-col">
+        <span class="${scoreCls}">${scoreDisp}</span>
+      </td>
+      <td class="num-col col-ba">
+        <span class="stat-val ${baHot ? 'hot-stat' : ''}">${fmtBA(p.windowBA)}</span>
+      </td>
+      <td class="num-col col-ops">
+        <span class="stat-val">${fmtOPS(p.windowOPS)}</span>
+      </td>
+      <td class="num-col col-hr">
+        <span class="stat-val">${p.windowHR ?? '—'}</span>
+      </td>
+      <td class="num-col col-sb">
+        <span class="stat-val">${p.windowSB ?? '—'}</span>
+      </td>
+      <td class="num-col col-wrc">
+        <span class="stat-val">${fmtBA(p.seasonBA)}</span>
+      </td>
+      <td>
+        <div class="trend-cell">
+          <canvas class="sparkline-mini" width="60" height="24"
+            data-values="${(p.recentBA || []).join(',')}"
+            aria-label="Trend for ${p.name}">
+          </canvas>
+          <span class="trend-arrow ${trendCls}">${trendArrow}</span>
+        </div>
+      </td>
+      <td>
+        <button class="watch-btn ${watching ? 'watching' : ''}"
+          data-player-id="${p.id}"
+          aria-label="${watching ? 'Remove from watchlist' : 'Add to watchlist'}"
+          aria-pressed="${watching}">
+          ${watching ? '★' : '☆'}
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Draw mini sparklines
+  tbody.querySelectorAll('canvas.sparkline-mini').forEach(drawMiniSparkline);
+
+  document.getElementById('showing-count').textContent = slice.length;
+  document.getElementById('total-count').textContent   = state.filtered.length;
+}
+
+function drawMiniSparkline(canvas) {
+  const raw = canvas.dataset.values;
+  if (!raw) return;
+  const vals = raw.split(',').map(Number).filter(v => v > 0);
+  if (vals.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = max - min || 0.001;
+  const pad = 2;
+  const color = { up: '#2DD4A0', down: '#E24B4A', flat: '#7A8499' }[baTrend(vals)];
+  ctx.clearRect(0, 0, w, h);
+  ctx.beginPath();
+  vals.forEach((v, i) => {
+    const x = pad + (i / (vals.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+}
+
+function renderSummaryStats() {
+  const all = state.players;
+  const withWindow = all.filter(p => p.hotScore != null);
+  document.getElementById('stat-players').textContent = all.length || '—';
+  document.getElementById('stat-hot').textContent = all.filter(p => (p.hotScore || 0) >= 60).length || '0';
+  const avgScore = withWindow.length
+    ? (withWindow.reduce((s, p) => s + p.hotScore, 0) / withWindow.length).toFixed(1)
+    : '—';
+  document.getElementById('stat-avg-score').textContent = avgScore;
+  document.getElementById('stat-window-ready').textContent = state.windowLoaded;
+  document.getElementById('stat-window-sub').textContent =
+    `of ${all.length} players loaded`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PLAYER MODAL
+// ═══════════════════════════════════════════════════════════════
+
+async function openPlayerModal(playerId) {
+  const player = state.players.find(p => p.id === playerId);
+  if (!player) return;
+
+  document.getElementById('player-modal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+
+  // Populate static fields immediately
+  document.getElementById('modal-player-name').textContent = player.name;
+  document.getElementById('modal-org').textContent   = player.parentOrg;
+  document.getElementById('modal-pos').textContent   = player.position || '—';
+  document.getElementById('modal-age').textContent   = player.age ? `Age ${player.age}` : '—';
+  document.getElementById('modal-bats').textContent  = (player.bats && player.throws) ? `B/T: ${player.bats}/${player.throws}` : '—';
+  document.getElementById('modal-level').textContent = player.level;
+  document.getElementById('modal-level').className   = `level-badge ${levelClass(player.level)}`;
+
+  // Avatar
+  const avatarEl = document.getElementById('modal-avatar');
+  avatarEl.innerHTML = `<img src="${CONFIG.PHOTO_URL(player.id)}" alt="${player.name}" onerror="this.style.display='none';this.parentElement.textContent='${initials(player.name)}'"/>`;
+
+  // Window stats
+  document.getElementById('ms-ba').textContent  = fmtBA(player.windowBA);
+  document.getElementById('ms-ops').textContent = fmtOPS(player.windowOPS);
+  document.getElementById('ms-hr').textContent  = player.windowHR ?? '—';
+  document.getElementById('ms-sb').textContent  = player.windowSB ?? '—';
+  document.getElementById('ms-pa').textContent  = player.windowPA ?? '—';
+
+  // Season stats
+  document.getElementById('ss-g').textContent   = player.seasonG   || '—';
+  document.getElementById('ss-avg').textContent  = fmtBA(player.seasonBA);
+  document.getElementById('ss-obp').textContent  = fmtOPS(player.seasonOBP);
+  document.getElementById('ss-slg').textContent  = fmtOPS(player.seasonSLG);
+  document.getElementById('ss-hr').textContent   = player.seasonHR  || '—';
+  document.getElementById('ss-sb').textContent   = player.seasonSB  || '—';
+
+  // Hot Score breakdown
+  document.getElementById('sc-total').textContent    = player.hotScore    != null ? player.hotScore.toFixed(1)    : '—';
+  document.getElementById('sc-ba').textContent       = player.baScore     != null ? player.baScore.toFixed(1)     : '—';
+  document.getElementById('sc-ops').textContent      = player.opsScore    != null ? player.opsScore.toFixed(1)    : '—';
+  document.getElementById('sc-momentum').textContent = player.momentumScore != null ? player.momentumScore.toFixed(1) : '—';
+
+  // eBay links
+  const ebayQuery = encodeURIComponent(`${player.name} rookie card`);
+  document.getElementById('ebay-link').href       = `https://www.ebay.com/sch/i.html?_nkw=${ebayQuery}&LH_Sold=1&LH_Complete=1`;
+  document.getElementById('ebay-search-link').href = `https://www.ebay.com/sch/i.html?_nkw=${ebayQuery}&LH_Sold=1&LH_Complete=1`;
+  document.getElementById('mlb-profile-link').href = `https://www.milb.com/player/${playerId}`;
+
+  updateModalWatchBtn(playerId);
+
+  // Draw charts immediately with whatever data we already have cached
+  drawSparklineChart(player.recentBA || []);
+  drawPriceChart(player.recentPrices || [], player.ebaySource);
+
+  // ── Lazy-load 1: Player profile (age, position, bats/throws) ─────────────
+  // Only fetched once — cached 24hrs in localStorage
+  if (!player.position || !player.age) {
+    fetchPlayerProfile(player.id).then(profile => {
+      Object.assign(player, profile);
+      document.getElementById('modal-pos').textContent  = profile.position || '—';
+      document.getElementById('modal-age').textContent  = profile.age ? `Age ${profile.age}` : '—';
+      document.getElementById('modal-bats').textContent = (profile.bats && profile.throws)
+        ? `B/T: ${profile.bats}/${profile.throws}` : '—';
+      renderLeaderboard();
+    }).catch(err => console.warn('Profile fetch failed:', err));
+  }
+
+  // ── Lazy-load 2: Game log for sparkline ──────────────────────────────────
+  // Fetched fresh each session (60min cache), updates hot score momentum
+  if (!player.recentBA.length) {
+    fetchGameLog(player.id).then(baValues => {
+      player.recentBA = baValues;
+      calcHotScore(player);
+      drawSparklineChart(baValues);
+      document.getElementById('sc-total').textContent    = player.hotScore    != null ? player.hotScore.toFixed(1)    : '—';
+      document.getElementById('sc-momentum').textContent = player.momentumScore != null ? player.momentumScore.toFixed(1) : '—';
+    }).catch(err => console.warn('Game log fetch failed:', err));
+  }
+
+  // ── Lazy-load 3: eBay card prices via Cloudflare Worker ─────────────────
+  // Fetched once per player per session (4hr cache)
+  // Worker returns mock data until eBay developer account is approved
+  if (!player.ebayListings) {
+    setEbayLoading(true);
+    fetchEbayPrices(player.name).then(result => {
+      if (!result) { setEbayLoading(false); return; }
+
+      player.ebayListings = result.items || [];
+      player.ebaySource   = result.source; // 'ebay_live' or 'mock'
+      player.recentPrices = extractPrices(player.ebayListings);
+      player.cardPrice    = player.recentPrices.length
+        ? player.recentPrices[player.recentPrices.length - 1]
+        : null;
+      player.cardPriceTrend = priceTrend(player.recentPrices);
+
+      // Redraw price chart with real/mock data
+      drawPriceChart(player.recentPrices, player.ebaySource);
+
+      // Update trend badge
+      const badge = document.getElementById('price-trend-badge');
+      const trend = player.cardPriceTrend || 'stable';
+      badge.textContent = trend.charAt(0).toUpperCase() + trend.slice(1);
+      badge.className   = `price-trend-badge ${trend}`;
+
+      // Render eBay listings table
+      renderEbayTable(player.ebayListings, player.ebaySource);
+      setEbayLoading(false);
+    }).catch(err => {
+      console.warn('eBay fetch failed:', err);
+      setEbayLoading(false);
+    });
+  } else {
+    // Already fetched this session — render from cache
+    renderEbayTable(player.ebayListings, player.ebaySource);
+  }
+}
+
+function closePlayerModal() {
+  document.getElementById('player-modal').classList.remove('open');
+  document.body.style.overflow = '';
+  if (state.sparklineChart) { state.sparklineChart.destroy(); state.sparklineChart = null; }
+  if (state.priceChart)     { state.priceChart.destroy();     state.priceChart = null; }
+}
+
+function drawSparklineChart(baValues) {
+  const ctx = document.getElementById('sparkline-chart').getContext('2d');
+  if (state.sparklineChart) state.sparklineChart.destroy();
+  const trend = baTrend(baValues);
+  const color = { up: '#2DD4A0', down: '#E24B4A', flat: '#D4A017' }[trend];
+  const trendLabels = { up: '▲ Rising', down: '▼ Falling', flat: '→ Flat' };
+  document.getElementById('sparkline-trend-label').textContent = trendLabels[trend] || '—';
+  document.getElementById('sparkline-trend-label').style.color = color;
+
+  state.sparklineChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: baValues.map((_, i) => `G${i + 1}`),
+      datasets: [{
+        label: 'BA', data: baValues, borderColor: color,
+        backgroundColor: color + '18', fill: true, tension: 0.35,
+        pointRadius: 3, pointBackgroundColor: color, pointBorderColor: '#0D1422',
+        pointBorderWidth: 1.5, borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { backgroundColor: '#131928', titleColor: '#7A8499', bodyColor: '#F0EDE6', borderColor: 'rgba(212,160,23,0.3)', borderWidth: 1, callbacks: { label: ctx => 'BA: ' + fmtBA(ctx.parsed.y) } }
+      },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 } } },
+        y: { min: 0, max: 0.600, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 }, callback: v => fmtBA(v), maxTicksLimit: 5 } }
+      }
+    }
+  });
+}
+
+function drawPriceChart(prices, source) {
+  const ctx = document.getElementById('price-chart').getContext('2d');
+  if (state.priceChart) state.priceChart.destroy();
+  const hasData = prices && prices.length > 0;
+  const isMock  = source === 'mock';
+  const color   = isMock ? '#7A8499' : '#D4A017'; // gray for mock, gold for live
+
+  state.priceChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: hasData ? prices.map((_, i) => `#${i + 1}`) : ['—'],
+      datasets: [{
+        label: isMock ? 'Mock Price' : 'Listing Price',
+        data: hasData ? prices : [0],
+        borderColor: color, backgroundColor: color + '18', fill: true,
+        tension: 0.2, pointRadius: 4, pointBackgroundColor: color,
+        pointBorderColor: '#0D1422', pointBorderWidth: 1.5, borderWidth: 2,
+        borderDash: isMock ? [4, 4] : [],  // dashed line for mock data
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#131928', bodyColor: '#F0EDE6',
+          borderColor: isMock ? 'rgba(122,132,153,0.4)' : 'rgba(212,160,23,0.3)', borderWidth: 1,
+          callbacks: {
+            label: ctx => hasData ? (isMock ? '~' : '') + '$' + ctx.parsed.y.toFixed(2) : 'No data yet',
+          }
+        }
+      },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 } } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 }, callback: v => '$' + v.toFixed(0), maxTicksLimit: 5 } }
+      }
+    }
+  });
+}
+
+/**
+ * Renders the eBay listings table inside the modal.
+ * Shows a "Mock data" notice when running before eBay account approval.
+ */
+function renderEbayTable(items = [], source = 'ebay_live') {
+  const tbody = document.getElementById('ebay-sales-body');
+  const isMock = source === 'mock';
+
+  // Update the section label to show mock vs live
+  const sectionLabel = document.querySelector('#ebay-sales-body').closest('.modal-stat-box')?.querySelector('.modal-stat-box-label span');
+  if (sectionLabel) {
+    sectionLabel.innerHTML = isMock
+      ? 'Recent eBay Listings <span style="font-size:9px;background:rgba(122,132,153,0.2);color:var(--text-dim);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:0.5px;">MOCK DATA</span>'
+      : 'Recent eBay Listings <span style="font-size:9px;background:rgba(45,212,160,0.1);color:var(--green);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:0.5px;">LIVE</span>';
+  }
+
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:16px;">No listings found</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = items.map(item => {
+    const date  = item.listingDate
+      ? new Date(item.listingDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : '—';
+    const title = (item.title || '').substring(0, 45) + (item.title?.length > 45 ? '…' : '');
+    const price = item.price ? (isMock ? '~' : '') + '$' + item.price.toFixed(2) : '—';
+    const grade = item.grade || '—';
+    const priceColor = isMock ? 'var(--text-muted)' : 'var(--green)';
+    const rowUrl = item.itemWebUrl && !isMock
+      ? `onclick="window.open('${item.itemWebUrl}','_blank')" style="cursor:pointer;"` : '';
+
+    return `
+      <tr ${rowUrl}>
+        <td>${date}</td>
+        <td style="color:var(--text-primary);">${title}</td>
+        <td>${grade}</td>
+        <td style="color:${priceColor};font-weight:600;">${price}</td>
+      </tr>`;
+  }).join('');
+}
+
+/** Shows/hides a loading skeleton in the eBay table while fetching */
+function setEbayLoading(loading) {
+  const tbody = document.getElementById('ebay-sales-body');
+  if (loading) {
+    tbody.innerHTML = [1,2,3].map(() => `
+      <tr>
+        <td><div class="skeleton skeleton-line" style="width:50px;"></div></td>
+        <td><div class="skeleton skeleton-line" style="width:160px;"></div></td>
+        <td><div class="skeleton skeleton-line" style="width:40px;"></div></td>
+        <td><div class="skeleton skeleton-line" style="width:50px;float:right;"></div></td>
+      </tr>`).join('');
+  }
+}
+
+/** Computes price trend from array of prices: 'rising' | 'falling' | 'stable' */
+function priceTrend(prices) {
+  if (!prices || prices.length < 3) return 'stable';
+  const mid   = Math.floor(prices.length / 2);
+  const avg   = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const early = avg(prices.slice(0, mid));
+  const later = avg(prices.slice(mid));
+  const pct   = (later - early) / (early || 1);
+  if (pct > 0.10) return 'rising';
+  if (pct < -0.10) return 'falling';
+  return 'stable';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WATCHLIST
+// ═══════════════════════════════════════════════════════════════
+
+function toggleWatchlist(playerId) {
+  if (state.watchlist.has(playerId)) state.watchlist.delete(playerId);
+  else state.watchlist.add(playerId);
+  localStorage.setItem('milb_watchlist', JSON.stringify([...state.watchlist]));
+  document.getElementById('watch-count').textContent = state.watchlist.size;
+  renderWatchlistPanel();
+  // Update any watch button in table
+  document.querySelectorAll(`.watch-btn[data-player-id="${playerId}"]`).forEach(btn => {
+    const w = state.watchlist.has(playerId);
+    btn.textContent = w ? '★' : '☆';
+    btn.classList.toggle('watching', w);
+    btn.setAttribute('aria-pressed', w);
+  });
+}
+
+function renderWatchlistPanel() {
+  const body    = document.getElementById('watchlist-body');
+  const emptyEl = document.getElementById('watchlist-empty');
+  const watched = [...state.watchlist].map(id => state.players.find(p => p.id === id)).filter(Boolean);
+  if (!watched.length) { emptyEl.style.display = 'block'; body.querySelectorAll('.watchlist-item').forEach(el => el.remove()); return; }
+  emptyEl.style.display = 'none';
+  body.innerHTML = watched.map(p => `
+    <div class="watchlist-item" data-player-id="${p.id}" role="button" tabindex="0">
+      <div class="player-avatar" style="width:32px;height:32px;font-size:12px;">${initials(p.name)}</div>
+      <div><div class="watchlist-item-name">${p.name}</div><div class="watchlist-item-meta">${p.level} · ${p.parentOrg}${p.position ? ' · ' + p.position : ''}</div></div>
+      <div class="watchlist-item-price">${p.hotScore != null ? p.hotScore.toFixed(1) : '—'}</div>
+    </div>`).join('');
+}
+
+function updateModalWatchBtn(playerId) {
+  const w = state.watchlist.has(playerId);
+  ['modal-watch-btn', 'modal-watch-footer'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) { btn.textContent = w ? '★ Watching' : '☆ Watch'; btn.dataset.playerId = playerId; }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ORG FILTER POPULATION
+// ═══════════════════════════════════════════════════════════════
+
+function populateOrgFilter() {
+  const sel = document.getElementById('org-filter');
+  // Clear existing options except "All"
+  while (sel.options.length > 1) sel.remove(1);
+  const orgs = {};
+  state.players.forEach(p => { if (p.parentOrgId) orgs[p.parentOrgId] = p.parentOrg; });
+  Object.entries(orgs).sort((a, b) => a[1].localeCompare(b[1])).forEach(([id, name]) => {
+    const opt = document.createElement('option');
+    opt.value = id; opt.textContent = name;
+    sel.appendChild(opt);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+function setProgress(pct) {
+  document.getElementById('fetch-progress-bar').style.width = pct + '%';
+}
+function setFetchStatus(msg) {
+  document.getElementById('fetch-status-text').textContent = msg;
+}
+function showFetchUI(show) {
+  document.getElementById('fetch-status').classList.toggle('visible', show);
+  document.getElementById('fetch-progress').classList.toggle('visible', show);
+}
+function hideFetchUI() {
+  showFetchUI(false);
+  setProgress(0);
+}
+function showError(show, msg = '') {
+  const el = document.getElementById('error-banner');
+  el.style.display = show ? 'flex' : 'none';
+  if (msg) document.getElementById('error-message').textContent = msg;
+}
+
+function exportCSV() {
+  const headers = ['Rank','Name','Org','Level','Pos','Age','HotScore','BA(win)','OPS(win)','HR(win)','SB(win)','PA(win)','SeasonBA','SeasonOPS','SeasonG'];
+  const rows = state.filtered.slice(0, (state.page + 1) * CONFIG.PAGE_SIZE).map((p, i) => [
+    i + 1, p.name, p.parentOrg, p.level, p.position || '', p.age || '',
+    p.hotScore?.toFixed(1) || '', fmtBA(p.windowBA), fmtOPS(p.windowOPS),
+    p.windowHR ?? '', p.windowSB ?? '', p.windowPA ?? '',
+    fmtBA(p.seasonBA), fmtOPS(p.seasonOPS), p.seasonG,
+  ]);
+  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `milb_prospects_${today()}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT LISTENERS
+// ═══════════════════════════════════════════════════════════════
+
+function bindEvents() {
+  // Hot/Cold toggle
+  document.querySelectorAll('.hc-btn').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.hc-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
+    btn.classList.add('active'); btn.setAttribute('aria-pressed','true');
+    state.mode = btn.dataset.mode;
+    const tag = document.getElementById('mode-tag');
+    tag.textContent = state.mode === 'hot' ? '🔥 HOT' : '❄ COLD';
+    tag.className = 'tag ' + (state.mode === 'hot' ? 'tag-hot' : 'tag-cold');
+    applyFilters(); renderLeaderboard(); renderSummaryStats();
+  }));
+
+  // Window toggle
+  document.querySelectorAll('.window-btn').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.window-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.windowDays = parseInt(btn.dataset.days);
+    document.getElementById('window-tag').textContent = btn.dataset.days + 'D';
+    // Clear window stats cache for all players and re-fetch
+    state.players.forEach(p => { p.windowBA = null; p.windowOPS = null; p.windowHR = null; p.windowSB = null; p.windowPA = null; p.hotScore = null; });
+    state.windowLoaded = 0;
+    showFetchUI(true);
+    applyFilters(); renderLeaderboard();
+    batchFetchWindowStats(state.players);
+  }));
+
+  // Level pills
+  document.querySelectorAll('[data-filter="level"]').forEach(pill => pill.addEventListener('click', () => {
+    document.querySelectorAll('[data-filter="level"]').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active'); state.level = pill.dataset.val;
+    applyFilters(); renderLeaderboard(); renderSummaryStats();
+  }));
+
+  // Position pills
+  document.querySelectorAll('[data-filter="pos"]').forEach(pill => pill.addEventListener('click', () => {
+    document.querySelectorAll('[data-filter="pos"]').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active'); state.position = pill.dataset.val;
+    applyFilters(); renderLeaderboard(); renderSummaryStats();
+  }));
+
+  // Org select
+  document.getElementById('org-filter').addEventListener('change', e => {
+    state.org = e.target.value; applyFilters(); renderLeaderboard(); renderSummaryStats();
+  });
+
+  // Age range
+  const ageInput = document.getElementById('age-filter');
+  ageInput.addEventListener('input', () => {
+    state.maxAge = parseInt(ageInput.value);
+    document.getElementById('age-display').textContent = state.maxAge;
+    applyFilters(); renderLeaderboard(); renderSummaryStats();
+  });
+
+  // Min PA range
+  const paInput = document.getElementById('pa-filter');
+  paInput.addEventListener('input', () => {
+    state.minPA = parseInt(paInput.value);
+    document.getElementById('pa-display').textContent = state.minPA;
+    applyFilters(); renderLeaderboard();
+  });
+
+  // Min hot score range
+  const scoreInput = document.getElementById('score-filter');
+  scoreInput.addEventListener('input', () => {
+    state.minScore = parseInt(scoreInput.value);
+    document.getElementById('score-display').textContent = state.minScore;
+    applyFilters(); renderLeaderboard();
+  });
+
+  // Reset filters
+  document.getElementById('reset-filters').addEventListener('click', () => {
+    state.level = 'all'; state.position = 'all'; state.org = 'all';
+    state.maxAge = 26; state.minPA = 20; state.minScore = 0;
+    state.mode = 'hot'; state.windowDays = 14;
+    document.querySelectorAll('[data-filter]').forEach(p => p.classList.toggle('active', p.dataset.val === 'all'));
+    document.querySelectorAll('.hc-btn').forEach(b => { b.classList.toggle('active', b.dataset.mode === 'hot'); b.setAttribute('aria-pressed', b.dataset.mode === 'hot'); });
+    document.querySelectorAll('.window-btn').forEach(b => b.classList.toggle('active', b.dataset.days === '14'));
+    document.getElementById('org-filter').value = 'all';
+    ageInput.value = 26;   document.getElementById('age-display').textContent = '26';
+    paInput.value = 20;    document.getElementById('pa-display').textContent = '20';
+    scoreInput.value = 0;  document.getElementById('score-display').textContent = '0';
+    applyFilters(); renderLeaderboard(); renderSummaryStats();
+  });
+
+  // Sort select
+  document.getElementById('sort-select').addEventListener('change', e => {
+    state.sortBy = e.target.value; applyFilters(); renderLeaderboard();
+  });
+
+  // Table header sort
+  document.querySelectorAll('.leaderboard-table thead th[data-sort]').forEach(th => th.addEventListener('click', () => {
+    const col = th.dataset.sort; if (!col) return;
+    state.sortDir = state.sortBy === col ? (state.sortDir === 'desc' ? 'asc' : 'desc') : 'desc';
+    state.sortBy = col;
+    document.querySelectorAll('thead th').forEach(h => { h.classList.remove('sorted'); const a = h.querySelector('.sort-arrow'); if (a) a.textContent = ''; });
+    th.classList.add('sorted');
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = state.sortDir === 'desc' ? '↓' : '↑';
+    document.getElementById('sort-select').value = col;
+    applyFilters(); renderLeaderboard();
+  }));
+
+  // Row click → modal; watch button click → watchlist
+  document.getElementById('leaderboard-body').addEventListener('click', e => {
+    const watchBtn = e.target.closest('.watch-btn');
+    if (watchBtn) { e.stopPropagation(); toggleWatchlist(parseInt(watchBtn.dataset.playerId)); return; }
+    const row = e.target.closest('tr[data-player-id]');
+    if (row) openPlayerModal(parseInt(row.dataset.playerId));
+  });
+  // Keyboard accessibility for rows
+  document.getElementById('leaderboard-body').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const row = e.target.closest('tr[data-player-id]');
+    if (row) openPlayerModal(parseInt(row.dataset.playerId));
+  });
+
+  // Watchlist panel
+  document.getElementById('watchlist-body').addEventListener('click', e => {
+    const item = e.target.closest('[data-player-id]');
+    if (item) openPlayerModal(parseInt(item.dataset.playerId));
+  });
+
+  // Load more
+  document.getElementById('load-more-btn').addEventListener('click', () => {
+    state.page++; renderLeaderboard();
+  });
+
+  // Modal close
+  document.getElementById('modal-close').addEventListener('click', closePlayerModal);
+  document.getElementById('player-modal').addEventListener('click', e => { if (e.target === document.getElementById('player-modal')) closePlayerModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closePlayerModal(); });
+
+  // Modal watch buttons
+  ['modal-watch-btn', 'modal-watch-footer'].forEach(id => {
+    document.getElementById(id)?.addEventListener('click', function() {
+      const pid = parseInt(this.dataset.playerId);
+      if (pid) { toggleWatchlist(pid); updateModalWatchBtn(pid); }
+    });
+  });
+
+  // Watchlist panel toggle
+  document.getElementById('watchlist-btn').addEventListener('click', () => document.getElementById('watchlist-panel').classList.toggle('open'));
+  document.getElementById('watchlist-close').addEventListener('click', () => document.getElementById('watchlist-panel').classList.remove('open'));
+  document.getElementById('clear-watchlist').addEventListener('click', () => {
+    state.watchlist.clear();
+    localStorage.removeItem('milb_watchlist');
+    document.getElementById('watch-count').textContent = '0';
+    renderWatchlistPanel();
+  });
+
+  // Refresh
+  document.getElementById('refresh-btn').addEventListener('click', () => {
+    clearOldCache();
+    state.players = []; state.windowLoaded = 0;
+    loadData();
+  });
+
+  // Retry on error
+  document.getElementById('retry-btn').addEventListener('click', () => { showError(false); loadData(); });
+
+  // Export
+  document.getElementById('export-btn').addEventListener('click', exportCSV);
+
+  // Mobile sidebar
+  document.getElementById('sidebar-toggle').addEventListener('click', () => document.getElementById('sidebar').classList.toggle('mobile-open'));
+  document.getElementById('main-content').addEventListener('click', () => {
+    if (window.innerWidth < 860) document.getElementById('sidebar').classList.remove('mobile-open');
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+
+async function init() {
+  // Restore watchlist
+  try {
+    const saved = localStorage.getItem('milb_watchlist');
+    if (saved) state.watchlist = new Set(JSON.parse(saved));
+  } catch {}
+  document.getElementById('watch-count').textContent = state.watchlist.size;
+
+  bindEvents();
+
+  // Check 6am ET gate
+  const meta = JSON.parse(localStorage.getItem('milb_meta') || '{}');
+  if (needsRefresh(meta.lastFetch)) {
+    // Full fresh fetch
+    await loadData();
+  } else {
+    // Serve from cache, still re-fetch window stats for this session
+    await loadFromCache();
+  }
+
+  if (state.watchlist.size > 0) renderWatchlistPanel();
+}
+
+// Boot
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>
