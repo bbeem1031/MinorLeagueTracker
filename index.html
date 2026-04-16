@@ -657,7 +657,8 @@ const CONFIG = {
 
   // Minimum plate appearances in the window to include in hot score calc
   // Prevents 2-PA flukes showing .500 BA at the top
-  MIN_PA_WINDOW: 20,
+  // Lowered to 5 for early season when players have few games
+  MIN_PA_WINDOW: 5,
 
   // Hot score formula weights (must sum to 100)
   HS_WEIGHTS: { ba: 40, ops: 30, momentum: 20, level: 10 },
@@ -672,7 +673,7 @@ const CONFIG = {
   // The Worker injects the eBay OAuth token server-side.
   // While waiting for eBay developer approval, the Worker returns mock data.
   // See worker/ebay-proxy.js and README.md for setup instructions.
-  WORKER_URL: 'https://milb-ebay-proxy.bbeem1031.workers.dev',
+  WORKER_URL: 'https://milb-ebay-proxy.yourusername.workers.dev',
 
   // Cache TTLs in ms — stored in localStorage with prefix 'milb_'
   CACHE_TTL: {
@@ -697,7 +698,7 @@ const state = {
   position:   'all',
   org:        'all',
   maxAge:     26,
-  minPA:      20,
+  minPA:      5,
   minScore:   0,
   sortBy:     'hotScore',
   sortDir:    'desc',
@@ -1125,17 +1126,22 @@ function momentumBonus(recentBAValues) {
  * Mutates the player object in place — no return value needed.
  */
 function calcHotScore(player) {
-  if (!player.windowBA || !player.windowOPS) {
+  // Use window stats if available, fall back to season stats early in the season
+  const ba  = player.windowBA  ?? player.seasonBA;
+  const ops = player.windowOPS ?? player.seasonOPS;
+
+  if (!ba || !ops) {
     player.hotScore = null;
     return;
   }
 
   const w = CONFIG.HS_WEIGHTS;
   const levelMult = CONFIG.LEVEL_MULT[player.level] ?? 0.70;
+  const isWindowData = player.windowBA != null;
 
-  const baComp       = player.windowBA  * w.ba;
-  const opsComp      = player.windowOPS * w.ops;
-  const momBonus     = momentumBonus(player.recentBA);
+  const baComp       = ba  * w.ba;
+  const opsComp      = ops * w.ops;
+  const momBonus     = isWindowData ? momentumBonus(player.recentBA) : 0.5;
   const momentumComp = momBonus * w.momentum;
   const levelComp    = levelMult * w.level;
 
@@ -1144,6 +1150,8 @@ function calcHotScore(player) {
   player.momentumScore = parseFloat(momentumComp.toFixed(2));
   player.levelScore    = parseFloat(levelComp.toFixed(2));
   player.hotScore      = parseFloat((baComp + opsComp + momentumComp + levelComp).toFixed(2));
+  // Flag whether score is based on window or season data
+  player.hotScoreSource = isWindowData ? 'window' : 'season';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1316,6 +1324,10 @@ async function loadData() {
 
     state.players = allPlayers;
 
+    // Calculate initial hot scores from season stats immediately
+    // These will be recalculated with window stats as they load
+    state.players.forEach(p => calcHotScore(p));
+
     // Initial render with season stats only (window stats null → hot score null)
     applyFilters();
     renderLeaderboard();
@@ -1403,14 +1415,17 @@ function applyFilters() {
     list = list.filter(p => p.hotScore != null && p.hotScore >= state.minScore);
   }
 
-  // Hot mode: players with window stats that qualify
-  // Cold mode: players below 0.270 BA and 0.700 OPS in the window
+  // Hot mode: show all players, prioritize those with window stats
+  // Cold mode: players below thresholds in window OR season stats
   if (state.mode === 'hot') {
-    list = list.filter(p => p.hotScore != null || p.windowBA == null);
+    // Show everyone — window stats populate progressively
+    // Players without window stats still show via season BA
   } else {
-    list = list.filter(p =>
-      p.windowBA != null && p.windowBA < 0.270 && p.windowOPS < 0.700
-    );
+    list = list.filter(p => {
+      const ba  = p.windowBA  ?? p.seasonBA;
+      const ops = p.windowOPS ?? p.seasonOPS;
+      return ba != null && ba < 0.270 && ops < 0.700;
+    });
   }
 
   // Sort — players with null hotScore go to the bottom
@@ -1506,10 +1521,14 @@ function renderLeaderboard() {
         <span class="${scoreCls}">${scoreDisp}</span>
       </td>
       <td class="num-col col-ba">
-        <span class="stat-val ${baHot ? 'hot-stat' : ''}">${fmtBA(p.windowBA)}</span>
+        <span class="stat-val ${baHot ? 'hot-stat' : ''}" title="${p.windowBA != null ? '14-day window' : 'Season avg'}">
+          ${fmtBA(p.windowBA ?? p.seasonBA)}${p.windowBA == null ? '<span style="font-size:9px;color:var(--text-dim);margin-left:2px;">S</span>' : ''}
+        </span>
       </td>
       <td class="num-col col-ops">
-        <span class="stat-val">${fmtOPS(p.windowOPS)}</span>
+        <span class="stat-val" title="${p.windowOPS != null ? '14-day window' : 'Season OPS'}">
+          ${fmtOPS(p.windowOPS ?? p.seasonOPS)}${p.windowOPS == null ? '<span style="font-size:9px;color:var(--text-dim);margin-left:2px;">S</span>' : ''}
+        </span>
       </td>
       <td class="num-col col-hr">
         <span class="stat-val">${p.windowHR ?? '—'}</span>
@@ -2029,14 +2048,14 @@ function bindEvents() {
   // Reset filters
   document.getElementById('reset-filters').addEventListener('click', () => {
     state.level = 'all'; state.position = 'all'; state.org = 'all';
-    state.maxAge = 26; state.minPA = 20; state.minScore = 0;
+    state.maxAge = 26; state.minPA = 5; state.minScore = 0;
     state.mode = 'hot'; state.windowDays = 14;
     document.querySelectorAll('[data-filter]').forEach(p => p.classList.toggle('active', p.dataset.val === 'all'));
     document.querySelectorAll('.hc-btn').forEach(b => { b.classList.toggle('active', b.dataset.mode === 'hot'); b.setAttribute('aria-pressed', b.dataset.mode === 'hot'); });
     document.querySelectorAll('.window-btn').forEach(b => b.classList.toggle('active', b.dataset.days === '14'));
     document.getElementById('org-filter').value = 'all';
     ageInput.value = 26;   document.getElementById('age-display').textContent = '26';
-    paInput.value = 20;    document.getElementById('pa-display').textContent = '20';
+    paInput.value = 5;     document.getElementById('pa-display').textContent = '5';
     scoreInput.value = 0;  document.getElementById('score-display').textContent = '0';
     applyFilters(); renderLeaderboard(); renderSummaryStats();
   });
