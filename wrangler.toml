@@ -20,7 +20,7 @@ EBAY_ENVIRONMENT = "production"   # "sandbox" while testing, "production" after 
 # Restrict CORS to your GitHub Pages domain once deployed.
 # Use "*" during local development.
 # Replace with your actual domain:
-ALLOWED_ORIGIN = "https://yourusername.github.io"
+ALLOWED_ORIGIN = "https://bbeem1031.github.io"
 
 # Optional: Upgrade to KV for persistent token caching across isolates.
 # Uncomment and run `wrangler kv:namespace create "CACHE"` to create the namespace,
