@@ -1006,12 +1006,14 @@ function normalizePlayer(split, levelName, teamMap) {
  *
  * Returns null if no data available (player had no games in the window).
  */
-async function fetchWindowStats(playerId, startDate, endDate) {
+async function fetchWindowStats(playerId, startDate, endDate, level) {
+  const sportId = CONFIG.SPORT_IDS[level] || 11;
   const url = `${CONFIG.MLB_BASE}/people/${playerId}/stats`
     + `?stats=byDateRange`
     + `&group=hitting`
     + `&startDate=${startDate}`
-    + `&endDate=${endDate}`;
+    + `&endDate=${endDate}`
+    + `&sportId=${sportId}`;
 
   const cacheKey = `window_${playerId}_${startDate}_${endDate}`;
   const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.window);
@@ -1044,14 +1046,14 @@ async function batchFetchWindowStats(players) {
   const total = players.length;
   let done = 0;
 
-  setProgress(10); // base progress after leaders loaded
+  setProgress(10);
 
   for (let i = 0; i < players.length; i += CONFIG.BATCH_SIZE) {
     const batch = players.slice(i, i + CONFIG.BATCH_SIZE);
 
     await Promise.all(batch.map(async player => {
       try {
-        const stats = await fetchWindowStats(player.id, start, end);
+        const stats = await fetchWindowStats(player.id, start, end, player.level);
         if (stats && stats.pa >= CONFIG.MIN_PA_WINDOW) {
           player.windowBA  = stats.ba;
           player.windowOPS = stats.ops;
@@ -1062,16 +1064,20 @@ async function batchFetchWindowStats(players) {
           player.windowPA  = stats.pa;
           calcHotScore(player);
           state.windowLoaded++;
+        } else {
+          // Not enough PA in window — use season stats for hot score
+          // Keep window fields null so UI shows "S" indicator
+          calcHotScore(player);
         }
       } catch (err) {
-        // Individual player failure is non-fatal — log and continue
-        console.warn(`Window stats failed for ${player.name} (${player.id}):`, err.message);
+        console.warn(`Window stats failed for ${player.name}:`, err.message);
+        // Fallback to season-based hot score on error
+        calcHotScore(player);
       } finally {
         done++;
       }
     }));
 
-    // Progressive re-render after each batch
     setProgress(10 + Math.round((done / total) * 85));
     setFetchStatus(`Loading window stats… ${done}/${total} players`);
     applyFilters();
@@ -1172,12 +1178,14 @@ function calcHotScore(player) {
  * We calculate per-game BA as hits/atBats to feed the sparkline.
  * Returns last 10 games.
  */
-async function fetchGameLog(playerId) {
-  const year = CONFIG.SEASON;
+async function fetchGameLog(playerId, level) {
+  const year     = CONFIG.SEASON;
+  const sportId  = CONFIG.SPORT_IDS[level] || 11;
   const url  = `${CONFIG.MLB_BASE}/people/${playerId}/stats`
     + `?stats=gameLog`
     + `&group=hitting`
-    + `&season=${year}`;
+    + `&season=${year}`
+    + `&sportId=${sportId}`;
 
   const cacheKey = `gamelog_${playerId}_${year}`;
   const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.gamelog);
@@ -1438,39 +1446,47 @@ async function loadFromCache() {
 function applyFilters() {
   let list = [...state.players];
 
+  // Level filter
   if (state.level !== 'all') {
     list = list.filter(p => p.level === state.level);
   }
+
+  // Position filter — only filter if position is known, skip unknowns
+  // Positions load async so we can't exclude unknown ones or table goes blank
   if (state.position !== 'all') {
     list = list.filter(p => p.position === state.position || p.position == null);
   }
+
+  // Org filter
   if (state.org !== 'all') {
     list = list.filter(p => String(p.parentOrgId) === String(state.org));
   }
+
+  // Age filter — skip if age unknown
   if (state.maxAge < 35) {
-    list = list.filter(p => !p.age || p.age <= state.maxAge);
-  }
-  if (state.minPA > 0) {
-    list = list.filter(p => !p.windowPA || p.windowPA >= state.minPA);
-  }
-  if (state.minScore > 0) {
-    list = list.filter(p => p.hotScore != null && p.hotScore >= state.minScore);
+    list = list.filter(p => p.age == null || p.age <= state.maxAge);
   }
 
-  // Hot mode: show all players, prioritize those with window stats
-  // Cold mode: players below thresholds in window OR season stats
-  if (state.mode === 'hot') {
-    // Show everyone — window stats populate progressively
-    // Players without window stats still show via season BA
-  } else {
+  // Min PA filter — only apply if player has window data
+  if (state.minPA > 1) {
+    list = list.filter(p => p.windowPA == null || p.windowPA >= state.minPA);
+  }
+
+  // Min hot score filter
+  if (state.minScore > 0) {
+    list = list.filter(p => (p.hotScore ?? 0) >= state.minScore);
+  }
+
+  // Cold mode: show players performing below thresholds
+  if (state.mode === 'cold') {
     list = list.filter(p => {
-      const ba  = p.windowBA  ?? p.seasonBA;
-      const ops = p.windowOPS ?? p.seasonOPS;
-      return ba != null && ba < 0.270 && ops < 0.700;
+      const ba  = p.windowBA  ?? p.seasonBA  ?? 1;
+      const ops = p.windowOPS ?? p.seasonOPS ?? 1;
+      return ba < 0.250 && ops < 0.650;
     });
   }
 
-  // Sort — players with null hotScore go to the bottom
+  // Sort — null hotScores go to bottom in desc, top in asc
   list.sort((a, b) => {
     const dir = state.sortDir === 'desc' ? -1 : 1;
     const va = a[state.sortBy] ?? (state.sortDir === 'desc' ? -Infinity : Infinity);
@@ -1479,6 +1495,7 @@ function applyFilters() {
   });
 
   state.filtered = list;
+  state.page = 0; // reset to first page on any filter change
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1719,7 +1736,7 @@ async function openPlayerModal(playerId) {
   // ── Lazy-load 2: Game log for sparkline ──────────────────────────────────
   // Fetched fresh each session (60min cache), updates hot score momentum
   if (!player.recentBA.length) {
-    fetchGameLog(player.id).then(baValues => {
+    fetchGameLog(player.id, player.level).then(baValues => {
       player.recentBA = baValues;
       calcHotScore(player);
       drawSparklineChart(baValues);
@@ -2032,15 +2049,38 @@ function bindEvents() {
 
   // Window toggle
   document.querySelectorAll('.window-btn').forEach(btn => btn.addEventListener('click', () => {
+    const newDays = parseInt(btn.dataset.days);
+    if (newDays === state.windowDays) return; // no change
     document.querySelectorAll('.window-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    state.windowDays = parseInt(btn.dataset.days);
+    state.windowDays = newDays;
     document.getElementById('window-tag').textContent = btn.dataset.days + 'D';
-    // Clear window stats cache for all players and re-fetch
-    state.players.forEach(p => { p.windowBA = null; p.windowOPS = null; p.windowHR = null; p.windowSB = null; p.windowPA = null; p.hotScore = null; });
+
+    // Clear window stats and hot scores on all players
+    state.players.forEach(p => {
+      p.windowBA = null; p.windowOPS = null; p.windowOBP = null;
+      p.windowSLG = null; p.windowHR = null; p.windowSB = null;
+      p.windowPA = null; p.hotScore = null; p.hotScoreSource = null;
+      p.baScore = null; p.opsScore = null; p.momentumScore = null;
+    });
+
+    // Clear window stat localStorage cache so re-fetch goes to API
+    const start = windowStartDate(newDays);
+    const end   = today();
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('milb_window_'))
+      .forEach(k => localStorage.removeItem(k));
+
     state.windowLoaded = 0;
+    state.page = 0;
+
+    // Recalculate scores from season stats as fallback while window loads
+    state.players.forEach(p => calcHotScore(p));
+
     showFetchUI(true);
-    applyFilters(); renderLeaderboard();
+    applyFilters();
+    renderLeaderboard();
+    renderSummaryStats();
     batchFetchWindowStats(state.players);
   }));
 
@@ -2091,14 +2131,18 @@ function bindEvents() {
   document.getElementById('reset-filters').addEventListener('click', () => {
     state.level = 'all'; state.position = 'all'; state.org = 'all';
     state.maxAge = 26; state.minPA = 5; state.minScore = 0;
-    state.mode = 'hot'; state.windowDays = 14;
+    state.mode = 'hot'; state.sortBy = 'hotScore'; state.sortDir = 'desc';
+    state.page = 0;
     document.querySelectorAll('[data-filter]').forEach(p => p.classList.toggle('active', p.dataset.val === 'all'));
     document.querySelectorAll('.hc-btn').forEach(b => { b.classList.toggle('active', b.dataset.mode === 'hot'); b.setAttribute('aria-pressed', b.dataset.mode === 'hot'); });
     document.querySelectorAll('.window-btn').forEach(b => b.classList.toggle('active', b.dataset.days === '14'));
     document.getElementById('org-filter').value = 'all';
+    document.getElementById('sort-select').value = 'hotScore';
     ageInput.value = 26;   document.getElementById('age-display').textContent = '26';
     paInput.value = 5;     document.getElementById('pa-display').textContent = '5';
     scoreInput.value = 0;  document.getElementById('score-display').textContent = '0';
+    const tag = document.getElementById('mode-tag');
+    tag.textContent = '🔥 HOT'; tag.className = 'tag tag-hot';
     applyFilters(); renderLeaderboard(); renderSummaryStats();
   });
 
