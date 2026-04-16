@@ -1530,6 +1530,119 @@ function hotScoreClass(score) {
   return 'hot-score-low';
 }
 
+// ═══════════════════════════════════════════════════════════════
+// INTERSECTION OBSERVER — lazy sparkline loading on scroll
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Watches table rows as they scroll into view and fetches game log
+ * data automatically — no clicking required.
+ *
+ * Uses a 300ms debounce timer so fast scrolling doesn't hammer the API.
+ * Once a player's game log is fetched, the observer disconnects for
+ * that row so it never fetches twice.
+ *
+ * Flow:
+ *   Row enters viewport (300ms dwell)
+ *     → fetchGameLog(player.id, player.level)
+ *       → drawMiniSparkline on that row's canvas
+ *         → observer.unobserve(row) — done
+ */
+let sparklineObserver = null;
+const pendingSparklines = new Map(); // rowEl → debounce timer
+
+function initSparklineObserver() {
+  // Disconnect old observer if it exists (e.g. after re-render)
+  if (sparklineObserver) sparklineObserver.disconnect();
+  pendingSparklines.forEach(t => clearTimeout(t));
+  pendingSparklines.clear();
+
+  sparklineObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const row = entry.target;
+      const playerId = parseInt(row.dataset.playerId);
+
+      if (entry.isIntersecting) {
+        // Row entered viewport — start 300ms timer
+        if (!pendingSparklines.has(row)) {
+          const timer = setTimeout(() => {
+            pendingSparklines.delete(row);
+            loadSparklineForRow(row, playerId);
+          }, 300);
+          pendingSparklines.set(row, timer);
+        }
+      } else {
+        // Row left viewport before timer fired — cancel
+        const timer = pendingSparklines.get(row);
+        if (timer) {
+          clearTimeout(timer);
+          pendingSparklines.delete(row);
+        }
+      }
+    });
+  }, {
+    root: null,         // viewport
+    rootMargin: '100px', // start loading 100px before visible
+    threshold: 0.1,     // fire when 10% of row is visible
+  });
+}
+
+/**
+ * Fetches game log for a player and updates their sparkline canvas in-place.
+ * Unobserves the row after first successful fetch to avoid repeat calls.
+ */
+async function loadSparklineForRow(row, playerId) {
+  const player = state.players.find(p => p.id === playerId);
+  if (!player) return;
+
+  // Already have data — just draw and stop observing
+  if (player.recentBA && player.recentBA.length > 0) {
+    updateRowSparkline(row, player.recentBA);
+    sparklineObserver?.unobserve(row);
+    return;
+  }
+
+  try {
+    const baValues = await fetchGameLog(player.id, player.level);
+    if (baValues && baValues.length > 0) {
+      player.recentBA = baValues;
+      // Recalculate hot score with real momentum data
+      calcHotScore(player);
+      updateRowSparkline(row, baValues);
+      // Update the score cell in this row if hot score improved
+      const scoreCell = row.querySelector('td.num-col span');
+      if (scoreCell && player.hotScore != null) {
+        scoreCell.textContent = player.hotScore.toFixed(1);
+        scoreCell.className   = hotScoreClass(player.hotScore);
+      }
+    }
+  } catch (err) {
+    console.warn(`Sparkline fetch failed for ${player.name}:`, err.message);
+  } finally {
+    sparklineObserver?.unobserve(row);
+  }
+}
+
+/**
+ * Redraws the sparkline canvas inside a row and updates the trend arrow.
+ */
+function updateRowSparkline(row, baValues) {
+  const canvas = row.querySelector('canvas.sparkline-mini');
+  const arrow  = row.querySelector('.trend-arrow');
+  if (!canvas) return;
+
+  // Update canvas data attribute and redraw
+  canvas.dataset.values = baValues.join(',');
+  drawMiniSparkline(canvas);
+
+  // Update trend arrow
+  if (arrow) {
+    const trend = baTrend(baValues);
+    arrow.textContent = { up: '↑', down: '↓', flat: '→' }[trend];
+    arrow.className   = `trend-arrow ${{ up: 'trend-up', down: 'trend-down', flat: 'trend-flat' }[trend]}`;
+  }
+}
+
 function renderLeaderboard() {
   const tbody     = document.getElementById('leaderboard-body');
   const emptyEl   = document.getElementById('empty-state');
@@ -1555,9 +1668,7 @@ function renderLeaderboard() {
     const scoreCls   = hotScoreClass(p.hotScore);
     const scoreDisp  = p.hotScore != null ? p.hotScore.toFixed(1) : '—';
     const baHot      = p.windowBA != null && p.windowBA >= 0.330;
-
-    // MLB photo — falls back to initials on error via onerror
-    const photoSrc = CONFIG.PHOTO_URL(p.id);
+    const photoSrc   = CONFIG.PHOTO_URL(p.id);
 
     return `
     <tr data-player-id="${p.id}" role="row" tabindex="0">
@@ -1621,8 +1732,19 @@ function renderLeaderboard() {
     </tr>`;
   }).join('');
 
-  // Draw mini sparklines
+  // Draw sparklines for players who already have game log data
   tbody.querySelectorAll('canvas.sparkline-mini').forEach(drawMiniSparkline);
+
+  // Set up intersection observer to auto-fetch sparklines as rows scroll in
+  initSparklineObserver();
+  tbody.querySelectorAll('tr[data-player-id]').forEach(row => {
+    const playerId = parseInt(row.dataset.playerId);
+    const player   = state.players.find(p => p.id === playerId);
+    // Only observe rows that don't already have sparkline data
+    if (player && (!player.recentBA || player.recentBA.length === 0)) {
+      sparklineObserver.observe(row);
+    }
+  });
 
   document.getElementById('showing-count').textContent = slice.length;
   document.getElementById('total-count').textContent   = state.filtered.length;
