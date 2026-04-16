@@ -1191,14 +1191,15 @@ async function fetchGameLog(playerId, level) {
   const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.gamelog);
   const splits = data.stats?.[0]?.splits || [];
 
-  // Calculate per-game BA from per-game H/AB (not cumulative avg)
-  return splits
-    .slice(-10)
-    .map(split => {
-      const ab   = split.stat?.atBats || 0;
-      const hits  = split.stat?.hits   || 0;
-      return ab > 0 ? parseFloat((hits / ab).toFixed(3)) : 0;
-    });
+  // Use rolling cumulative BA (total H / total AB up to each game)
+  // This is much smoother than per-game BA and shows real trend
+  const last10 = splits.slice(-10);
+  let totalH = 0, totalAB = 0;
+  return last10.map(split => {
+    totalH  += split.stat?.hits   || 0;
+    totalAB += split.stat?.atBats || 0;
+    return totalAB > 0 ? parseFloat((totalH / totalAB).toFixed(3)) : null;
+  }).filter(v => v !== null);
 }
 
 /**
@@ -1510,13 +1511,15 @@ function levelClass(lvl) { return { AAA: 'level-aaa', AA: 'level-aa', 'A+': 'lev
 
 function baTrend(vals) {
   if (!vals || vals.length < 4) return 'flat';
-  const recent = vals.slice(-3).filter(v => v > 0);
-  const prior  = vals.slice(0, 3).filter(v => v > 0);
-  if (!recent.length || !prior.length) return 'flat';
+  // For rolling cumulative BA, compare first half vs second half
+  const mid    = Math.floor(vals.length / 2);
+  const early  = vals.slice(0, mid).filter(v => v > 0);
+  const recent = vals.slice(mid).filter(v => v > 0);
+  if (!early.length || !recent.length) return 'flat';
   const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
-  const delta = avg(recent) - avg(prior);
-  if (delta > 0.030) return 'up';
-  if (delta < -0.030) return 'down';
+  const delta = avg(recent) - avg(early);
+  if (delta > 0.020) return 'up';
+  if (delta < -0.020) return 'down';
   return 'flat';
 }
 
@@ -1818,7 +1821,10 @@ function drawSparklineChart(baValues) {
       },
       scales: {
         x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 } } },
-        y: { min: 0, max: 0.600, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 }, callback: v => fmtBA(v), maxTicksLimit: 5 } }
+        y: {
+            min: baValues.length ? Math.max(0, Math.min(...baValues) - 0.050) : 0,
+            max: baValues.length ? Math.min(0.700, Math.max(...baValues) + 0.050) : 0.500,
+            grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 }, callback: v => fmtBA(v), maxTicksLimit: 5 } }
       }
     }
   });
