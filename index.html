@@ -372,8 +372,8 @@
     <div class="sidebar-section">
       <div class="sidebar-label">Min Plate Appearances</div>
       <div class="range-row">
-        <span style="font-family:var(--font-mono);font-size:13px;color:var(--gold);" id="pa-display">20</span>
-        <input type="range" id="pa-filter" min="1" max="60" value="20" />
+        <span style="font-family:var(--font-mono);font-size:13px;color:var(--gold);" id="pa-display">5</span>
+        <input type="range" id="pa-filter" min="1" max="60" value="5" />
         <span style="font-size:11px;color:var(--text-dim);">PA</span>
       </div>
     </div>
@@ -1272,6 +1272,43 @@ function extractPrices(items = []) {
     .map(item => item.price);
 }
 
+/**
+ * Fetches position, age, bats, throws for all players in bulk.
+ * Uses the /people endpoint with comma-separated IDs (up to 50 at a time).
+ * GET https://statsapi.mlb.com/api/v1/people?personIds=694497,681911,...
+ *
+ * Runs in background after initial render — re-renders leaderboard
+ * each batch so position filter becomes usable as data arrives.
+ */
+async function batchFetchPositions(players) {
+  const BATCH = 50; // MLB API allows up to 50 IDs per call
+  for (let i = 0; i < players.length; i += BATCH) {
+    const batch = players.slice(i, i + BATCH);
+    const ids   = batch.map(p => p.id).join(',');
+    const url   = `${CONFIG.MLB_BASE}/people?personIds=${ids}&hydrate=currentTeam`;
+    const cacheKey = `positions_batch_${i}_${CONFIG.SEASON}`;
+
+    try {
+      const data   = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.profile);
+      const people = data.people || [];
+      people.forEach(person => {
+        const player = state.players.find(p => p.id === person.id);
+        if (player) {
+          player.position = person.primaryPosition?.abbreviation || null;
+          player.age      = person.currentAge                    || null;
+          player.bats     = person.batSide?.code                 || null;
+          player.throws   = person.pitchHand?.code               || null;
+        }
+      });
+      // Re-render after each batch so filters update progressively
+      applyFilters();
+      renderLeaderboard();
+    } catch (err) {
+      console.warn('Position batch fetch failed:', err.message);
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MAIN DATA ORCHESTRATION
 // ═══════════════════════════════════════════════════════════════
@@ -1327,6 +1364,11 @@ async function loadData() {
     // Calculate initial hot scores from season stats immediately
     // These will be recalculated with window stats as they load
     state.players.forEach(p => calcHotScore(p));
+
+    // Prefetch positions for all players in batches of 10
+    // This runs in background so position filter works immediately
+    // GET https://statsapi.mlb.com/api/v1/people?personIds=id1,id2,...&hydrate=currentTeam
+    batchFetchPositions(state.players);
 
     // Initial render with season stats only (window stats null → hot score null)
     applyFilters();
@@ -1400,7 +1442,7 @@ function applyFilters() {
     list = list.filter(p => p.level === state.level);
   }
   if (state.position !== 'all') {
-    list = list.filter(p => p.position === state.position);
+    list = list.filter(p => p.position === state.position || p.position == null);
   }
   if (state.org !== 'all') {
     list = list.filter(p => String(p.parentOrgId) === String(state.org));
