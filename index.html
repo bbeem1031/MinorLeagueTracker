@@ -292,6 +292,86 @@
   .main-content, .sidebar { animation: fade-up 0.3s ease both; }
   .sidebar { animation-delay: 0.05s; }
   @keyframes fade-up { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+
+  /* ── Player Search ── */
+  .search-wrap {
+    position: relative;
+    display: flex; align-items: center;
+  }
+  .player-search-input {
+    width: 220px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-faint);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 13px;
+    padding: 7px 32px 7px 12px;
+    outline: none;
+    transition: border-color 0.15s, width 0.2s;
+  }
+  .player-search-input:focus {
+    border-color: var(--gold-dim);
+    width: 260px;
+  }
+  .player-search-input::placeholder { color: var(--text-dim); }
+  .search-clear {
+    position: absolute; right: 8px;
+    background: none; border: none;
+    color: var(--text-dim); cursor: pointer;
+    font-size: 14px; padding: 0;
+    display: none;
+  }
+  .search-clear.visible { display: block; }
+  .search-results {
+    position: absolute;
+    top: calc(100% + 6px); left: 0; right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    z-index: 200;
+    max-height: 320px;
+    overflow-y: auto;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .search-results.open { display: block; }
+  .search-result-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-faint);
+    transition: background 0.1s;
+  }
+  .search-result-item:last-child { border-bottom: none; }
+  .search-result-item:hover { background: var(--bg-hover); }
+  .search-result-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .search-result-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .search-result-score {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gold);
+    flex-shrink: 0;
+  }
+  .search-no-results {
+    padding: 16px 12px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .search-loading {
+    padding: 14px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  @media (max-width: 700px) {
+    .player-search-input { width: 140px; }
+    .player-search-input:focus { width: 180px; }
+  }
 </style>
 </head>
 <body>
@@ -305,6 +385,15 @@
   <div class="header-center">
     <div class="live-badge"><span class="live-dot"></span>Live Stats</div>
     <span id="last-updated" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-left:8px;">—</span>
+
+    <!-- Player Search -->
+    <div class="search-wrap" id="search-wrap" style="margin-left:16px;">
+      <input type="text" class="player-search-input" id="player-search"
+        placeholder="🔍 Search player…" autocomplete="off" aria-label="Search players"
+        aria-expanded="false" aria-controls="search-results" />
+      <button class="search-clear" id="search-clear" aria-label="Clear search">✕</button>
+      <div class="search-results" id="search-results" role="listbox" aria-label="Player search results"></div>
+    </div>
   </div>
   <div class="header-actions">
     <button class="btn btn-ghost btn-icon tooltip" data-tip="Refresh data" id="refresh-btn" aria-label="Refresh">↻</button>
@@ -647,7 +736,7 @@ const CONFIG = {
 
   // How many leaders to fetch per level per call
   // GET /api/v1/stats?stats=season&group=hitting&sportId={id}&season={year}&limit=50
-  LEADERS_LIMIT: 75,
+  LEADERS_LIMIT: 150,
 
   SEASON: new Date().getFullYear(),
 
@@ -2159,6 +2248,220 @@ function exportCSV() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// PLAYER SEARCH
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Searches loaded players by name (fuzzy, case-insensitive).
+ * If a player isn't found in state.players, fetches from MLB API by name.
+ *
+ * GET https://statsapi.mlb.com/api/v1/people/search?names={query}&sportId=11,12,13,14
+ * Returns matching people — we then fetch their stats if not already loaded.
+ */
+let searchDebounce = null;
+
+function initPlayerSearch() {
+  const input    = document.getElementById('player-search');
+  const results  = document.getElementById('search-results');
+  const clearBtn = document.getElementById('search-clear');
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    clearBtn.classList.toggle('visible', q.length > 0);
+
+    clearTimeout(searchDebounce);
+    if (q.length < 2) { closeSearch(); return; }
+
+    searchDebounce = setTimeout(() => runSearch(q), 250);
+  });
+
+  input.addEventListener('focus', () => {
+    if (input.value.trim().length >= 2) results.classList.add('open');
+  });
+
+  // Close on outside click
+  document.addEventListener('click', e => {
+    if (!document.getElementById('search-wrap').contains(e.target)) closeSearch();
+  });
+
+  // Keyboard nav
+  input.addEventListener('keydown', e => {
+    const items = results.querySelectorAll('.search-result-item');
+    const active = results.querySelector('.search-result-item.focused');
+    if (e.key === 'Escape') { closeSearch(); input.blur(); return; }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = active ? active.nextElementSibling : items[0];
+      if (next) { active?.classList.remove('focused'); next.classList.add('focused'); next.scrollIntoView({ block: 'nearest' }); }
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = active?.previousElementSibling;
+      if (prev) { active.classList.remove('focused'); prev.classList.add('focused'); prev.scrollIntoView({ block: 'nearest' }); }
+    }
+    if (e.key === 'Enter' && active) {
+      active.click();
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    clearBtn.classList.remove('visible');
+    closeSearch();
+    input.focus();
+  });
+}
+
+function closeSearch() {
+  document.getElementById('search-results').classList.remove('open');
+  document.getElementById('player-search').setAttribute('aria-expanded', 'false');
+}
+
+async function runSearch(query) {
+  const results = document.getElementById('search-results');
+  results.classList.add('open');
+  document.getElementById('player-search').setAttribute('aria-expanded', 'true');
+
+  // First search already-loaded players
+  const q = query.toLowerCase();
+  const local = state.players.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8);
+
+  if (local.length > 0) {
+    renderSearchResults(local, query);
+    return;
+  }
+
+  // Nothing found locally — search MLB API
+  results.innerHTML = `<div class="search-loading">Searching MLB database…</div>`;
+
+  try {
+    // GET https://statsapi.mlb.com/api/v1/people/search?names={query}&sportIds=11,12,13,14&season={year}
+    const year = CONFIG.SEASON;
+    const url  = `${CONFIG.MLB_BASE}/people/search?names=${encodeURIComponent(query)}&sportIds=11,12,13,14&season=${year}`;
+    const data = await fetch(url).then(r => r.json());
+    const people = (data.people || []).slice(0, 8);
+
+    if (people.length === 0) {
+      results.innerHTML = `<div class="search-no-results">No players found for "${query}"</div>`;
+      return;
+    }
+
+    // Fetch season stats for each found player and add to state if not already there
+    const toAdd = [];
+    await Promise.all(people.map(async person => {
+      // Check if already in state
+      let player = state.players.find(p => p.id === person.id);
+      if (!player) {
+        // Fetch their season stats
+        try {
+          const statsUrl = `${CONFIG.MLB_BASE}/people/${person.id}/stats`
+            + `?stats=season&group=hitting&season=${year}`;
+          const statsData = await fetch(statsUrl).then(r => r.json());
+          const split = statsData.stats?.[0]?.splits?.[0];
+          if (split) {
+            const levelMap = { 11: 'AAA', 12: 'AA', 13: 'A+', 14: 'A' };
+            const sportId  = split.sport?.id;
+            player = {
+              id:           person.id,
+              name:         person.fullName,
+              affiliateName: split.team?.name || '—',
+              parentOrg:    split.team?.name  || '—',
+              parentOrgId:  null,
+              level:        levelMap[sportId] || '?',
+              position:     person.primaryPosition?.abbreviation || null,
+              age:          person.currentAge || null,
+              bats:         person.batSide?.code || null,
+              throws:       person.pitchHand?.code || null,
+              seasonG:      split.stat?.gamesPlayed || 0,
+              seasonBA:     parseFloat(split.stat?.avg) || 0,
+              seasonOBP:    parseFloat(split.stat?.obp) || 0,
+              seasonSLG:    parseFloat(split.stat?.slg) || 0,
+              seasonOPS:    parseFloat(split.stat?.ops) || 0,
+              seasonHR:     split.stat?.homeRuns || 0,
+              seasonSB:     split.stat?.stolenBases || 0,
+              seasonRBI:    split.stat?.rbi || 0,
+              seasonPA:     split.stat?.plateAppearances || 0,
+              windowBA: null, windowOPS: null, windowHR: null, windowSB: null, windowPA: null,
+              recentBA: [], hotScore: null, cardPrice: null, recentPrices: [], ebayListings: null,
+            };
+            calcHotScore(player);
+            toAdd.push(player);
+          }
+        } catch {}
+      }
+      if (player) toAdd.push(player);
+    }));
+
+    // Add new players to state so they show up in results and can open modals
+    toAdd.forEach(p => {
+      if (!state.players.find(existing => existing.id === p.id)) {
+        state.players.push(p);
+      }
+    });
+
+    const found = toAdd.filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
+    renderSearchResults(found, query);
+
+  } catch (err) {
+    results.innerHTML = `<div class="search-no-results">Search failed — try again</div>`;
+    console.warn('Player search error:', err);
+  }
+}
+
+function renderSearchResults(players, query) {
+  const results = document.getElementById('search-results');
+  if (!players.length) {
+    results.innerHTML = `<div class="search-no-results">No players found for "${query}"</div>`;
+    return;
+  }
+
+  results.innerHTML = players.map(p => {
+    const lvlCls  = levelClass(p.level);
+    const score   = p.hotScore != null ? p.hotScore.toFixed(1) : '—';
+    const ba      = fmtBA(p.windowBA ?? p.seasonBA);
+    return `
+      <div class="search-result-item" data-player-id="${p.id}" role="option" tabindex="0">
+        <div class="player-avatar" style="width:32px;height:32px;font-size:12px;flex-shrink:0;">
+          <img src="${CONFIG.PHOTO_URL(p.id)}" alt="${p.name}"
+            onerror="this.style.display='none';this.parentElement.textContent='${initials(p.name)}'"/>
+        </div>
+        <div>
+          <div class="search-result-name">${highlightMatch(p.name, query)}</div>
+          <div class="search-result-meta">
+            <span class="level-badge ${lvlCls}" style="font-size:9px;padding:1px 5px;">${p.level}</span>
+            ${p.parentOrg}${p.position ? ' · ' + p.position : ''}${p.age ? ' · Age ' + p.age : ''}
+            · BA ${ba}
+          </div>
+        </div>
+        <div class="search-result-score">${score}</div>
+      </div>`;
+  }).join('');
+
+  // Click to open modal
+  results.querySelectorAll('.search-result-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const pid = parseInt(item.dataset.playerId);
+      closeSearch();
+      document.getElementById('player-search').value = '';
+      document.getElementById('search-clear').classList.remove('visible');
+      openPlayerModal(pid);
+    });
+    item.addEventListener('keydown', e => {
+      if (e.key === 'Enter') item.click();
+    });
+  });
+}
+
+/** Wraps matching text in a highlight span */
+function highlightMatch(name, query) {
+  const idx = name.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return name;
+  return name.slice(0, idx)
+    + `<span style="color:var(--gold)">${name.slice(idx, idx + query.length)}</span>`
+    + name.slice(idx + query.length);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // EVENT LISTENERS
 // ═══════════════════════════════════════════════════════════════
 
@@ -2372,6 +2675,7 @@ async function init() {
   document.getElementById('watch-count').textContent = state.watchlist.size;
 
   bindEvents();
+  initPlayerSearch();
 
   // Check 6am ET gate
   const meta = JSON.parse(localStorage.getItem('milb_meta') || '{}');
