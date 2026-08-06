@@ -1566,10 +1566,15 @@ function applyFilters() {
     list = list.filter(p => (p.hotScore ?? 0) >= state.minScore);
   }
 
-  // Hot mode: exclude players with no stats at all (0 AB, not yet played)
-  // Cold mode: only players clearly underperforming
+  // Hot mode: require a meaningful hot score (≥35) to appear
+  // This prevents cold/mediocre players from cluttering the hot leaderboard
+  // Players still loading window stats (hotScoreSource='season') show at ≥30
   if (state.mode === 'hot') {
-    list = list.filter(p => (p.seasonPA || 0) > 0 || (p.windowPA || 0) > 0);
+    list = list.filter(p => {
+      if ((p.seasonPA || 0) === 0 && (p.windowPA || 0) === 0) return false;
+      if (p.hotScore == null) return false;
+      return p.hotScore >= 35;
+    });
   } else {
     // Cold: clearly below average BA and OPS using best available stats
     list = list.filter(p => {
@@ -2482,93 +2487,107 @@ async function fetchOrgRoster(parentOrgId) {
   const year = CONFIG.SEASON;
 
   // Find all affiliate team IDs for this org from the team map
-  const affiliateIds = Object.entries(state.teamMap)
-    .filter(([, info]) => String(info.parentOrgId) === String(parentOrgId))
-    .map(([teamId]) => parseInt(teamId));
+  const affiliateTeams = Object.entries(state.teamMap)
+    .filter(([, info]) => String(info.parentOrgId) === String(parentOrgId));
 
-  if (!affiliateIds.length) return;
+  if (!affiliateTeams.length) return;
 
-  setFetchStatus(`Loading full ${state.players.find(p => String(p.parentOrgId) === String(parentOrgId))?.parentOrg || 'org'} roster…`);
+  const orgName = affiliateTeams[0][1].parentOrg || 'org';
+  setFetchStatus(`Loading full ${orgName} roster…`);
   showFetchUI(true);
 
   const newPlayers = [];
 
-  await Promise.all(affiliateIds.map(async teamId => {
+  await Promise.all(affiliateTeams.map(async ([teamId, teamInfo]) => {
     try {
       // GET /api/v1/teams/{teamId}/roster?rosterType=fullSeason&season={year}
-      const url = `${CONFIG.MLB_BASE}/teams/${teamId}/roster?rosterType=fullSeason&season=${year}`;
+      // Returns all players on the team's full-season roster including IL
+      const url = `${CONFIG.MLB_BASE}/teams/${teamId}/roster`
+        + `?rosterType=fullSeason&season=${year}`;
       const cacheKey = `roster_${teamId}_${year}`;
       const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.leaders);
       const roster = data.roster || [];
 
-      // Fetch season stats for players not already in state
-      const missing = roster.filter(r => !state.players.find(p => p.id === r.person?.id));
+      // Find players not already in state
+      const missing = roster.filter(r => r.person?.id && !state.players.find(p => p.id === r.person.id));
       if (!missing.length) return;
 
-      // Batch fetch stats for missing players (personIds comma-separated)
-      const ids = missing.map(r => r.person.id).join(',');
-      const statsUrl = `${CONFIG.MLB_BASE}/people?personIds=${ids}`
-        + `&hydrate=stats(group=hitting,type=season,season=${year}),currentTeam`;
-      const statsData = await fetchCached(statsUrl, `org_stats_${teamId}_${year}`, CONFIG.CACHE_TTL.leaders);
-      const people = statsData.people || [];
+      // Fetch season stats for each missing player individually
+      // (bulk hydration can be unreliable — individual calls are more consistent)
+      await Promise.all(missing.map(async rosterEntry => {
+        const personId = rosterEntry.person?.id;
+        if (!personId) return;
+        try {
+          // GET /api/v1/people/{id}/stats?stats=season&group=hitting&season={year}&sportId={id}
+          const sportId = CONFIG.SPORT_IDS[teamInfo.level] || 11;
+          const statsUrl = `${CONFIG.MLB_BASE}/people/${personId}/stats`
+            + `?stats=season&group=hitting&season=${year}&sportId=${sportId}`;
+          const statsData = await fetch(statsUrl).then(r => r.json());
+          const split = statsData.stats?.[0]?.splits?.[0];
+          const s = split?.stat || {};
 
-      const teamInfo = state.teamMap[teamId] || {};
+          // Also get profile (position, age)
+          const profileUrl = `${CONFIG.MLB_BASE}/people/${personId}`;
+          const profileData = await fetchCached(profileUrl, `profile_${personId}`, CONFIG.CACHE_TTL.profile);
+          const person = profileData.people?.[0] || {};
 
-      people.forEach(person => {
-        const split = person.stats?.find(s => s.group?.displayName === 'hitting')?.splits?.[0];
-        if (!split && !person.stats?.length) return; // no hitting stats
+          const player = {
+            id:           personId,
+            name:         rosterEntry.person.fullName || person.fullName || '?',
+            affiliateName: teamInfo.parentOrg || '—',
+            parentOrg:    teamInfo.parentOrg   || '—',
+            parentOrgId:  teamInfo.parentOrgId || parentOrgId,
+            level:        teamInfo.level        || '?',
+            position:     person.primaryPosition?.abbreviation || rosterEntry.position?.abbreviation || null,
+            age:          person.currentAge     || null,
+            bats:         person.batSide?.code  || null,
+            throws:       person.pitchHand?.code|| null,
+            seasonG:      s.gamesPlayed      || 0,
+            seasonBA:     parseFloat(s.avg)  || 0,
+            seasonOBP:    parseFloat(s.obp)  || 0,
+            seasonSLG:    parseFloat(s.slg)  || 0,
+            seasonOPS:    parseFloat(s.ops)  || 0,
+            seasonHR:     s.homeRuns         || 0,
+            seasonSB:     s.stolenBases      || 0,
+            seasonRBI:    s.rbi              || 0,
+            seasonPA:     s.plateAppearances || 0,
+            windowBA: null, windowOPS: null, windowOBP: null, windowSLG: null,
+            windowHR: null, windowSB: null, windowPA: null,
+            recentBA: [], hotScore: null, hotScoreSource: null,
+            baScore: null, opsScore: null, momentumScore: null, levelScore: null,
+            cardPrice: null, recentPrices: [], cardPriceTrend: null, ebayListings: null,
+          };
+          calcHotScore(player);
+          newPlayers.push(player);
+        } catch (err) {
+          console.warn(`Stats fetch failed for player ${personId}:`, err.message);
+        }
+      }));
 
-        const s = split?.stat || {};
-        const player = {
-          id:           person.id,
-          name:         person.fullName,
-          affiliateName: person.currentTeam?.name || '—',
-          parentOrg:    teamInfo.parentOrg || '—',
-          parentOrgId:  teamInfo.parentOrgId || parentOrgId,
-          level:        teamInfo.level || '?',
-          position:     person.primaryPosition?.abbreviation || null,
-          age:          person.currentAge || null,
-          bats:         person.batSide?.code || null,
-          throws:       person.pitchHand?.code || null,
-          seasonG:      s.gamesPlayed      || 0,
-          seasonBA:     parseFloat(s.avg)  || 0,
-          seasonOBP:    parseFloat(s.obp)  || 0,
-          seasonSLG:    parseFloat(s.slg)  || 0,
-          seasonOPS:    parseFloat(s.ops)  || 0,
-          seasonHR:     s.homeRuns         || 0,
-          seasonSB:     s.stolenBases      || 0,
-          seasonRBI:    s.rbi              || 0,
-          seasonPA:     s.plateAppearances || 0,
-          windowBA: null, windowOPS: null, windowOBP: null, windowSLG: null,
-          windowHR: null, windowSB: null, windowPA: null,
-          recentBA: [], hotScore: null, hotScoreSource: null,
-          baScore: null, opsScore: null, momentumScore: null, levelScore: null,
-          cardPrice: null, recentPrices: [], cardPriceTrend: null, ebayListings: null,
-        };
-        calcHotScore(player);
-        newPlayers.push(player);
-      });
     } catch (err) {
       console.warn(`Roster fetch failed for team ${teamId}:`, err.message);
     }
   }));
 
   // Add new players to state (no dupes)
+  let added = 0;
   newPlayers.forEach(p => {
     if (!state.players.find(existing => existing.id === p.id)) {
       state.players.push(p);
+      added++;
     }
   });
 
-  // Fetch window stats for the new players in background
-  if (newPlayers.length > 0) {
-    setFetchStatus(`Loading window stats for ${newPlayers.length} additional players…`);
-    batchFetchWindowStats(newPlayers).then(() => {
-      applyFilters(); renderLeaderboard(); renderSummaryStats();
-    });
+  if (added > 0) {
+    setFetchStatus(`Added ${added} players — loading window stats…`);
+    // Fetch window stats for new players in background
+    batchFetchWindowStats(newPlayers.filter(p => state.players.find(e => e.id === p.id)));
   }
 
   hideFetchUI();
+  applyFilters();
+  renderLeaderboard();
+  renderSummaryStats();
 }
 
 // ═══════════════════════════════════════════════════════════════
