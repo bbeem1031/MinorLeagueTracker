@@ -1,9 +1,7 @@
 # wrangler.toml
-# Cloudflare Workers config for MiLB eBay proxy
-#
 # Deploy:   wrangler deploy --name milb-card-proxy
-# Secret:   wrangler secret put EBAY_APP_ID
-#           (paste your eBay App ID / Client ID when prompted)
+# Secrets:  wrangler secret put EBAY_CLIENT_ID
+#           wrangler secret put EBAY_CLIENT_SECRET
 
 name               = "milb-card-proxy"
 main               = "worker/ebay-proxy.js"
