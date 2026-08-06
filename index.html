@@ -293,7 +293,48 @@
   .sidebar { animation-delay: 0.05s; }
   @keyframes fade-up { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
 
-  /* ── Player Search ── */
+  /* ── Price Tabs ── */
+  .price-tabs {
+    display: flex; gap: 4px;
+    margin-bottom: 12px;
+    background: var(--bg-base);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+  }
+  .price-tab {
+    flex: 1; padding: 6px 0;
+    border-radius: var(--radius-sm);
+    border: none; background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .price-tab:hover { color: var(--text-primary); }
+  .price-tab.active {
+    background: var(--bg-card);
+    color: var(--gold);
+    border: 1px solid var(--border);
+  }
+  .price-summary {
+    display: flex; gap: 16px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-faint);
+  }
+  .price-summary-stat { text-align: center; }
+  .price-summary-val {
+    font-family: var(--font-mono);
+    font-size: 15px; font-weight: 600;
+    color: var(--text-primary);
+  }
+  .price-summary-label {
+    font-size: 9px; font-family: var(--font-mono);
+    letter-spacing: 0.5px; text-transform: uppercase;
+    color: var(--text-dim); margin-top: 2px;
+  }
   .search-wrap {
     position: relative;
     display: flex; align-items: center;
@@ -671,11 +712,31 @@
         </div>
         <div class="modal-stat-box">
           <div class="modal-stat-box-label">
-            <span>eBay Card Price</span>
+            <span>eBay Card Price · Bowman Chrome Auto</span>
             <span id="price-trend-badge" class="price-trend-badge stable">—</span>
           </div>
-          <div class="chart-container">
-            <canvas id="price-chart" role="img" aria-label="eBay price chart">Card price history chart.</canvas>
+          <!-- Tab switcher -->
+          <div class="price-tabs" role="tablist" aria-label="Card price type">
+            <button class="price-tab active" data-tab="raw" role="tab" aria-selected="true">
+              Raw Auto
+            </button>
+            <button class="price-tab" data-tab="psa10" role="tab" aria-selected="false">
+              PSA 10
+            </button>
+          </div>
+          <!-- Raw chart -->
+          <div class="price-tab-panel" id="tab-panel-raw" role="tabpanel">
+            <div class="chart-container" style="height:160px;">
+              <canvas id="price-chart-raw" role="img" aria-label="Raw auto sold price chart">Raw auto sold price chart.</canvas>
+            </div>
+            <div class="price-summary" id="price-summary-raw"></div>
+          </div>
+          <!-- PSA 10 chart -->
+          <div class="price-tab-panel" id="tab-panel-psa10" role="tabpanel" style="display:none;">
+            <div class="chart-container" style="height:160px;">
+              <canvas id="price-chart-psa10" role="img" aria-label="PSA 10 sold price chart">PSA 10 sold price chart.</canvas>
+            </div>
+            <div class="price-summary" id="price-summary-psa10"></div>
           </div>
         </div>
       </div>
@@ -693,14 +754,14 @@
         </div>
       </div>
 
-      <!-- eBay table -->
+      <!-- eBay table — tabbed to match price charts -->
       <div class="modal-stat-box">
         <div class="modal-stat-box-label">
-          <span>Recent eBay Sales</span>
+          <span id="ebay-table-label">Recent Sold · Raw Auto</span>
           <a href="#" id="ebay-search-link" target="_blank" rel="noopener" style="color:var(--gold-dim);font-size:10px;text-decoration:none;">View on eBay ↗</a>
         </div>
-        <table class="ebay-table" aria-label="Recent eBay sales">
-          <thead><tr><th>Date</th><th>Description</th><th>Grade</th><th>Price</th></tr></thead>
+        <table class="ebay-table" aria-label="Recent eBay sold listings">
+          <thead><tr><th>Date</th><th>Parallel</th><th>Type</th><th>Price</th></tr></thead>
           <tbody id="ebay-sales-body"><tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:16px;">Loading eBay prices...</td></tr></tbody>
         </table>
       </div>
@@ -1322,23 +1383,14 @@ async function fetchPlayerProfile(playerId) {
 }
 
 /**
- * Fetches eBay card prices via the Cloudflare Worker proxy.
+ * Fetches Bowman Chrome auto sold prices via the Cloudflare Worker.
+ * Worker now calls eBay Finding API (completed sold listings only).
  *
- * The Worker (worker/ebay-proxy.js) handles:
- *   - eBay OAuth token management (auto-refresh every 2 hours)
- *   - CORS headers (eBay blocks direct browser requests)
- *   - Mock data when credentials aren't set yet
+ * Returns: { raw: [], psa10: [], source: 'ebay_sold'|'mock' }
+ *   raw   = raw/ungraded Bowman Chrome auto sold prices
+ *   psa10 = PSA 10 graded Bowman Chrome auto sold prices
  *
- * Our Worker endpoint:
- *   GET {WORKER_URL}?q={playerName}&limit=10
- *
- * Returns: { items[], total, source: 'ebay_live' | 'mock' }
- *
- * Results are cached 4 hours in localStorage — eBay prices don't
- * change minute-to-minute and we want to conserve the daily API quota.
- *
- * @param {string} playerName — e.g. "Jackson Holliday"
- * @returns {{ items: object[], total: number, source: string } | null}
+ * Results cached 4 hours for raw, 6 hours for PSA 10.
  */
 async function fetchEbayPrices(playerName) {
   const cacheKey = `ebay_${playerName.toLowerCase().replace(/\s+/g, '_')}`;
@@ -1346,7 +1398,7 @@ async function fetchEbayPrices(playerName) {
   if (cached) return cached;
 
   try {
-    const url = `${CONFIG.WORKER_URL}?q=${encodeURIComponent(playerName)}&limit=10`;
+    const url = `${CONFIG.WORKER_URL}?q=${encodeURIComponent(playerName)}&limit=15`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Worker responded ${res.status}`);
     const data = await res.json();
@@ -1358,15 +1410,25 @@ async function fetchEbayPrices(playerName) {
   }
 }
 
-/**
- * Extracts an array of prices from eBay response items for the price chart.
- * Sorted oldest → newest so the chart reads left to right chronologically.
- */
-function extractPrices(items = []) {
+/** Extracts sorted price array from items (oldest→newest for chart) */
+function extractPricesSorted(items = []) {
   return items
-    .filter(item => item.price > 0)
-    .sort((a, b) => new Date(a.listingDate) - new Date(b.listingDate))
-    .map(item => item.price);
+    .filter(i => i.price > 0)
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .map(i => i.price);
+}
+
+/** Avg price from items */
+function avgPrice(items = []) {
+  const prices = items.filter(i => i.price > 0).map(i => i.price);
+  if (!prices.length) return null;
+  return prices.reduce((a, b) => a + b, 0) / prices.length;
+}
+
+/** Most recent price from items */
+function latestPrice(items = []) {
+  const sorted = [...items].sort((a, b) => new Date(b.date) - new Date(a.date));
+  return sorted[0]?.price ?? null;
 }
 
 /**
@@ -1948,12 +2010,16 @@ async function openPlayerModal(playerId) {
 
   updateModalWatchBtn(playerId);
 
-  // Draw charts immediately with whatever data we already have cached
+  // Draw sparkline immediately with cached data
   drawSparklineChart(player.recentBA || []);
-  drawPriceChart(player.recentPrices || [], player.ebaySource);
+  // Draw price charts if already fetched
+  if (player.ebayListings) {
+    drawPriceChart(player.rawPrices   || [], 'raw',   player.ebaySource);
+    drawPriceChart(player.psa10Prices || [], 'psa10', player.ebaySource);
+    renderEbayTable(player.rawSales || [], player.ebaySource, 'raw');
+  }
 
-  // ── Lazy-load 1: Player profile (age, position, bats/throws) ─────────────
-  // Only fetched once — cached 24hrs in localStorage
+  // ── Lazy-load 1: Player profile ───────────────────────────────────────────
   if (!player.position || !player.age) {
     fetchPlayerProfile(player.id).then(profile => {
       Object.assign(player, profile);
@@ -1965,8 +2031,7 @@ async function openPlayerModal(playerId) {
     }).catch(err => console.warn('Profile fetch failed:', err));
   }
 
-  // ── Lazy-load 2: Game log for sparkline ──────────────────────────────────
-  // Fetched fresh each session (60min cache), updates hot score momentum
+  // ── Lazy-load 2: Game log sparkline ──────────────────────────────────────
   if (!player.recentBA.length) {
     fetchGameLog(player.id, player.level).then(baValues => {
       player.recentBA = baValues;
@@ -1977,49 +2042,78 @@ async function openPlayerModal(playerId) {
     }).catch(err => console.warn('Game log fetch failed:', err));
   }
 
-  // ── Lazy-load 3: eBay card prices via Cloudflare Worker ─────────────────
-  // Fetched once per player per session (4hr cache)
-  // Worker returns mock data until eBay developer account is approved
+  // ── Lazy-load 3: eBay sold prices (Bowman Chrome auto, raw + PSA 10) ─────
+  // Worker calls eBay Finding API for completed/sold listings only.
+  // Returns { raw: [], psa10: [], source: 'ebay_sold'|'mock' }
   if (!player.ebayListings) {
     setEbayLoading(true);
     fetchEbayPrices(player.name).then(result => {
       if (!result) { setEbayLoading(false); return; }
 
-      player.ebayListings = result.items || [];
-      player.ebaySource   = result.source; // 'ebay_live' or 'mock'
-      player.recentPrices = extractPrices(player.ebayListings);
-      player.cardPrice    = player.recentPrices.length
-        ? player.recentPrices[player.recentPrices.length - 1]
-        : null;
-      player.cardPriceTrend = priceTrend(player.recentPrices);
-
-      // Redraw price chart with real/mock data
-      drawPriceChart(player.recentPrices, player.ebaySource);
+      player.ebayListings  = result;
+      player.ebaySource    = result.source;
+      player.rawSales      = result.raw   || [];
+      player.psa10Sales    = result.psa10 || [];
+      player.rawPrices     = extractPricesSorted(player.rawSales);
+      player.psa10Prices   = extractPricesSorted(player.psa10Sales);
+      player.cardPrice     = latestPrice(player.rawSales);
+      player.cardPriceTrend = priceTrend(player.rawPrices);
 
       // Update trend badge
-      const badge = document.getElementById('price-trend-badge');
       const trend = player.cardPriceTrend || 'stable';
+      const badge = document.getElementById('price-trend-badge');
       badge.textContent = trend.charAt(0).toUpperCase() + trend.slice(1);
       badge.className   = `price-trend-badge ${trend}`;
 
-      // Render eBay listings table
-      renderEbayTable(player.ebayListings, player.ebaySource);
+      // Draw both charts
+      drawPriceChart(player.rawPrices,   'raw',   player.ebaySource);
+      drawPriceChart(player.psa10Prices, 'psa10', player.ebaySource);
+      renderEbayTable(player.rawSales, player.ebaySource, 'raw');
       setEbayLoading(false);
+
+      // Update eBay links
+      const ebayQ = encodeURIComponent(`${player.name} bowman chrome auto`);
+      ['ebay-search-link','ebay-link'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.href = `https://www.ebay.com/sch/i.html?_nkw=${ebayQ}&LH_Sold=1&LH_Complete=1`;
+      });
     }).catch(err => {
       console.warn('eBay fetch failed:', err);
       setEbayLoading(false);
     });
-  } else {
-    // Already fetched this session — render from cache
-    renderEbayTable(player.ebayListings, player.ebaySource);
   }
+
+  // ── Tab switcher ───────────────────────────────────────────────────────────
+  document.querySelectorAll('.price-tab').forEach(tab => {
+    // Clone to remove old listeners from previous modal open
+    const fresh = tab.cloneNode(true);
+    tab.parentNode.replaceChild(fresh, tab);
+    fresh.addEventListener('click', () => {
+      const type = fresh.dataset.tab;
+      document.querySelectorAll('.price-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tab === type);
+        t.setAttribute('aria-selected', t.dataset.tab === type);
+      });
+      document.querySelectorAll('.price-tab-panel').forEach(panel => {
+        panel.style.display = panel.id === `tab-panel-${type}` ? 'block' : 'none';
+      });
+      // Update table to match tab
+      const items = type === 'psa10' ? (player.psa10Sales || []) : (player.rawSales || []);
+      renderEbayTable(items, player.ebaySource || 'mock', type);
+    });
+  });
 }
 
 function closePlayerModal() {
   document.getElementById('player-modal').classList.remove('open');
   document.body.style.overflow = '';
-  if (state.sparklineChart) { state.sparklineChart.destroy(); state.sparklineChart = null; }
-  if (state.priceChart)     { state.priceChart.destroy();     state.priceChart = null; }
+  if (state.sparklineChart)  { state.sparklineChart.destroy();  state.sparklineChart = null; }
+  if (state.priceChart)      { state.priceChart.destroy();      state.priceChart = null; }
+  if (state.priceChartPsa10) { state.priceChartPsa10.destroy(); state.priceChartPsa10 = null; }
+  // Reset tabs to raw
+  document.querySelectorAll('.price-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'raw'));
+  document.getElementById('tab-panel-raw')?.style && (document.getElementById('tab-panel-raw').style.display = 'block');
+  document.getElementById('tab-panel-psa10')?.style && (document.getElementById('tab-panel-psa10').style.display = 'none');
 }
 
 function drawSparklineChart(baValues) {
@@ -2059,24 +2153,37 @@ function drawSparklineChart(baValues) {
   });
 }
 
-function drawPriceChart(prices, source) {
-  const ctx = document.getElementById('price-chart').getContext('2d');
-  if (state.priceChart) state.priceChart.destroy();
-  const hasData = prices && prices.length > 0;
-  const isMock  = source === 'mock';
-  const color   = isMock ? '#7A8499' : '#D4A017'; // gray for mock, gold for live
+/**
+ * Draws a price chart (raw or psa10) on the correct canvas.
+ * Called when tab is switched or data first loads.
+ */
+function drawPriceChart(prices, type, source) {
+  const canvasId = type === 'psa10' ? 'price-chart-psa10' : 'price-chart-raw';
+  const chartKey = type === 'psa10' ? 'priceChartPsa10' : 'priceChart';
+  const ctx      = document.getElementById(canvasId)?.getContext('2d');
+  if (!ctx) return;
 
-  state.priceChart = new Chart(ctx, {
+  if (state[chartKey]) { state[chartKey].destroy(); state[chartKey] = null; }
+
+  const hasData  = prices && prices.length > 0;
+  const isMock   = source === 'mock';
+  const color    = type === 'psa10' ? '#D4A017' : '#2DD4A0';
+  const trend    = priceTrend(prices);
+  const trendColor = trend === 'rising' ? '#2DD4A0' : trend === 'falling' ? '#E24B4A' : color;
+
+  state[chartKey] = new Chart(ctx, {
     type: 'line',
     data: {
       labels: hasData ? prices.map((_, i) => `#${i + 1}`) : ['—'],
       datasets: [{
-        label: isMock ? 'Mock Price' : 'Listing Price',
+        label: type === 'psa10' ? 'PSA 10' : 'Raw',
         data: hasData ? prices : [0],
-        borderColor: color, backgroundColor: color + '18', fill: true,
-        tension: 0.2, pointRadius: 4, pointBackgroundColor: color,
+        borderColor: trendColor,
+        backgroundColor: trendColor + '18',
+        fill: true, tension: 0.2,
+        pointRadius: 4, pointBackgroundColor: trendColor,
         pointBorderColor: '#0D1422', pointBorderWidth: 1.5, borderWidth: 2,
-        borderDash: isMock ? [4, 4] : [],  // dashed line for mock data
+        borderDash: isMock ? [4, 4] : [],
       }]
     },
     options: {
@@ -2085,10 +2192,8 @@ function drawPriceChart(prices, source) {
         legend: { display: false },
         tooltip: {
           backgroundColor: '#131928', bodyColor: '#F0EDE6',
-          borderColor: isMock ? 'rgba(122,132,153,0.4)' : 'rgba(212,160,23,0.3)', borderWidth: 1,
-          callbacks: {
-            label: ctx => hasData ? (isMock ? '~' : '') + '$' + ctx.parsed.y.toFixed(2) : 'No data yet',
-          }
+          borderColor: 'rgba(212,160,23,0.3)', borderWidth: 1,
+          callbacks: { label: ctx => hasData ? (isMock ? '~' : '') + '$' + ctx.parsed.y.toFixed(2) : 'No data' }
         }
       },
       scales: {
@@ -2097,58 +2202,93 @@ function drawPriceChart(prices, source) {
       }
     }
   });
+
+  // Render price summary below chart
+  renderPriceSummary(type, prices, trend, isMock);
+}
+
+/** Renders avg/latest/trend summary below the price chart */
+function renderPriceSummary(type, prices, trend, isMock) {
+  const el = document.getElementById(`price-summary-${type}`);
+  if (!el) return;
+  if (!prices || !prices.length) {
+    el.innerHTML = `<span style="font-size:12px;color:var(--text-dim);">No sold listings found</span>`;
+    return;
+  }
+  const avg    = prices.reduce((a, b) => a + b, 0) / prices.length;
+  const latest = prices[prices.length - 1];
+  const trendLabel = { rising: '↑ Rising', falling: '↓ Falling', stable: '→ Stable' }[trend];
+  const trendColor = { rising: 'var(--green)', falling: 'var(--red)', stable: 'var(--text-muted)' }[trend];
+  el.innerHTML = `
+    <div class="price-summary-stat">
+      <div class="price-summary-val">${isMock ? '~' : ''}$${avg.toFixed(0)}</div>
+      <div class="price-summary-label">Avg</div>
+    </div>
+    <div class="price-summary-stat">
+      <div class="price-summary-val">${isMock ? '~' : ''}$${latest.toFixed(0)}</div>
+      <div class="price-summary-label">Latest</div>
+    </div>
+    <div class="price-summary-stat">
+      <div class="price-summary-val" style="color:${trendColor}">${trendLabel}</div>
+      <div class="price-summary-label">Trend</div>
+    </div>
+    <div class="price-summary-stat">
+      <div class="price-summary-val">${prices.length}</div>
+      <div class="price-summary-label">Sales</div>
+    </div>`;
 }
 
 /**
- * Renders the eBay listings table inside the modal.
- * Shows a "Mock data" notice when running before eBay account approval.
+ * Renders the eBay sold listings table for the active tab (raw or psa10).
  */
-function renderEbayTable(items = [], source = 'ebay_live') {
-  const tbody = document.getElementById('ebay-sales-body');
-  const isMock = source === 'mock';
+function renderEbayTable(items = [], source = 'ebay_sold', type = 'raw') {
+  const tbody    = document.getElementById('ebay-sales-body');
+  const labelEl  = document.getElementById('ebay-table-label');
+  const isMock   = source === 'mock';
+  const typeLabel = type === 'psa10' ? 'PSA 10' : 'Raw Auto';
 
-  // Update the section label to show mock vs live
-  const sectionLabel = document.querySelector('#ebay-sales-body').closest('.modal-stat-box')?.querySelector('.modal-stat-box-label span');
-  if (sectionLabel) {
-    sectionLabel.innerHTML = isMock
-      ? 'Recent eBay Listings <span style="font-size:9px;background:rgba(122,132,153,0.2);color:var(--text-dim);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:0.5px;">MOCK DATA</span>'
-      : 'Recent eBay Listings <span style="font-size:9px;background:rgba(45,212,160,0.1);color:var(--green);padding:2px 6px;border-radius:3px;margin-left:6px;letter-spacing:0.5px;">LIVE</span>';
+  if (labelEl) {
+    labelEl.innerHTML = `Recent Sold · ${typeLabel}` +
+      (isMock ? ' <span style="font-size:9px;background:rgba(122,132,153,0.2);color:var(--text-dim);padding:2px 6px;border-radius:3px;margin-left:4px;">MOCK</span>' :
+                ' <span style="font-size:9px;background:rgba(45,212,160,0.1);color:var(--green);padding:2px 6px;border-radius:3px;margin-left:4px;">LIVE</span>');
   }
 
-  if (!items.length) {
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:16px;">No listings found</td></tr>`;
+  if (!items || !items.length) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:16px;">No ${typeLabel} sales found</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = items.map(item => {
-    const date  = item.listingDate
-      ? new Date(item.listingDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  // Sort newest first
+  const sorted = [...items].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  tbody.innerHTML = sorted.map(item => {
+    const date  = item.date
+      ? new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       : '—';
-    const title = (item.title || '').substring(0, 45) + (item.title?.length > 45 ? '…' : '');
     const price = item.price ? (isMock ? '~' : '') + '$' + item.price.toFixed(2) : '—';
-    const grade = item.grade || '—';
-    const priceColor = isMock ? 'var(--text-muted)' : 'var(--green)';
-    const rowUrl = item.itemWebUrl && !isMock
-      ? `onclick="window.open('${item.itemWebUrl}','_blank')" style="cursor:pointer;"` : '';
+    const parallel = item.parallel || '—';
+    const typeDisp = item.type === 'psa10' ? 'PSA 10' : 'Raw';
+    const rowUrl = item.itemUrl && !isMock
+      ? `onclick="window.open('${item.itemUrl}','_blank')" style="cursor:pointer;"` : '';
 
     return `
       <tr ${rowUrl}>
         <td>${date}</td>
-        <td style="color:var(--text-primary);">${title}</td>
-        <td>${grade}</td>
-        <td style="color:${priceColor};font-weight:600;">${price}</td>
+        <td style="color:var(--text-primary);">${parallel}</td>
+        <td><span style="font-size:10px;padding:2px 6px;border-radius:3px;background:${item.type==='psa10'?'rgba(212,160,23,0.15)':'rgba(45,212,160,0.1)'};color:${item.type==='psa10'?'var(--gold)':'var(--green)'};">${typeDisp}</span></td>
+        <td style="color:var(--green);font-weight:600;text-align:right;">${price}</td>
       </tr>`;
   }).join('');
 }
 
-/** Shows/hides a loading skeleton in the eBay table while fetching */
+/** Loading skeleton for eBay table */
 function setEbayLoading(loading) {
   const tbody = document.getElementById('ebay-sales-body');
   if (loading) {
     tbody.innerHTML = [1,2,3].map(() => `
       <tr>
         <td><div class="skeleton skeleton-line" style="width:50px;"></div></td>
-        <td><div class="skeleton skeleton-line" style="width:160px;"></div></td>
+        <td><div class="skeleton skeleton-line" style="width:100px;"></div></td>
         <td><div class="skeleton skeleton-line" style="width:40px;"></div></td>
         <td><div class="skeleton skeleton-line" style="width:50px;float:right;"></div></td>
       </tr>`).join('');

@@ -1,49 +1,29 @@
 /**
- * MiLB Card Tracker — eBay Browse API Proxy
+ * MiLB Card Tracker — eBay Finding API Proxy
  * Cloudflare Worker
  *
- * Responsibility:
- *   - Keep the eBay OAuth token server-side (never exposed to the browser)
- *   - Auto-refresh the token when it expires (eBay tokens last ~2 hours)
- *   - Forward player name searches to eBay Browse API
- *   - Return clean, normalized JSON to the browser
- *   - Add CORS headers so the GitHub Pages frontend can call this
+ * Switches from Browse API (active listings) to Finding API (sold listings only).
+ * The Finding API uses App ID directly — no OAuth token refresh needed.
  *
- * Required environment variables (set via `wrangler secret put`, NOT wrangler.toml):
- *   EBAY_CLIENT_ID      — from eBay developer dashboard → Application Keys
- *   EBAY_CLIENT_SECRET  — from eBay developer dashboard → Application Keys
+ * Runs two parallel searches per player:
+ *   1. Raw Bowman Chrome auto (no grading companies in title)
+ *   2. PSA 10 Bowman Chrome auto
  *
- * Optional environment variables (set in wrangler.toml [vars]):
- *   ALLOWED_ORIGIN      — restrict CORS to your GitHub Pages domain
- *                         e.g. "https://yourusername.github.io"
- *                         Defaults to "*" (any origin) if not set
- *   EBAY_ENVIRONMENT    — "production" or "sandbox" (defaults to production)
+ * Required environment variables (set via `wrangler secret put`):
+ *   EBAY_APP_ID   — your eBay App ID (Client ID) from developer dashboard
  *
- * Deploy:
- *   wrangler deploy
+ * Optional (set in wrangler.toml [vars]):
+ *   ALLOWED_ORIGIN      — your GitHub Pages domain
+ *   EBAY_ENVIRONMENT    — "production" or "sandbox"
  *
- * Local dev (mock mode — no eBay account needed):
- *   wrangler dev
- *   Then call: GET http://localhost:8787/?q=Jackson+Holliday&mock=true
+ * Deploy:   wrangler deploy --name milb-card-proxy
+ * Secrets:  wrangler secret put EBAY_APP_ID
  */
 
-// ─── Module-level token cache ───────────────────────────────────────────────
-// Lives for the lifetime of this Worker isolate (typically minutes to hours).
-// Cloudflare spins up new isolates as needed, so this is best-effort caching.
-// For production with high traffic, upgrade to KV storage (see comment below).
-let cachedToken  = null;
-let tokenExpiry  = 0;       // Unix ms timestamp when token expires
-
-// ─── eBay API base URLs ─────────────────────────────────────────────────────
-const EBAY_HOSTS = {
-  production: {
-    auth:   'https://api.ebay.com/identity/v1/oauth2/token',
-    browse: 'https://api.ebay.com/buy/browse/v1',
-  },
-  sandbox: {
-    auth:   'https://api.sandbox.ebay.com/identity/v1/oauth2/token',
-    browse: 'https://api.sandbox.ebay.com/buy/browse/v1',
-  },
+// ─── eBay Finding API endpoints ─────────────────────────────────────────────
+const FINDING_HOSTS = {
+  production: 'https://svcs.ebay.com/services/search/FindingService/v1',
+  sandbox:    'https://svcs.sandbox.ebay.com/services/search/FindingService/v1',
 };
 
 // ─── Main handler ───────────────────────────────────────────────────────────
@@ -53,287 +33,250 @@ export default {
 
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders(origin),
-      });
+      return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
 
-    // Only allow GET requests
     if (request.method !== 'GET') {
       return jsonResponse({ error: 'Method not allowed' }, 405, origin);
     }
 
-    const url    = new URL(request.url);
-    const query  = url.searchParams.get('q');
-    const limit  = Math.min(parseInt(url.searchParams.get('limit') || '10'), 20);
-    const mock   = url.searchParams.get('mock') === 'true';
+    const url   = new URL(request.url);
+    const query = url.searchParams.get('q');
+    const mock  = url.searchParams.get('mock') === 'true';
 
     if (!query || query.trim().length < 2) {
       return jsonResponse({ error: 'Missing or invalid q parameter' }, 400, origin);
     }
 
-    // ── Mock mode (use while waiting for eBay developer approval) ─────────
-    // Returns realistic-looking price data generated from the player name.
-    // Remove this block once your eBay developer account is approved.
-    if (mock || !env.EBAY_CLIENT_ID || !env.EBAY_CLIENT_SECRET) {
-      const mockData = generateMockListings(query, limit);
-      return jsonResponse(mockData, 200, origin);
+    // ── Mock mode ──────────────────────────────────────────────────────────
+    // Returns realistic sold price data for UI development / before eBay approval.
+    // The Finding API requires a production App ID — mock mode bypasses this.
+    if (mock || !env.EBAY_APP_ID) {
+      return jsonResponse(generateMockSoldListings(query), 200, origin);
     }
 
-    // ── Live eBay API mode ─────────────────────────────────────────────────
+    // ── Live mode ──────────────────────────────────────────────────────────
     try {
       const environment = env.EBAY_ENVIRONMENT || 'production';
-      const hosts       = EBAY_HOSTS[environment] || EBAY_HOSTS.production;
+      const endpoint    = FINDING_HOSTS[environment] || FINDING_HOSTS.production;
 
-      // Step 1: Get a valid OAuth token (cached or freshly fetched)
-      const token = await getToken(env, hosts);
+      // Run raw and PSA 10 searches in parallel
+      const [rawResults, psa10Results] = await Promise.all([
+        searchSoldListings(query, 'raw',   env.EBAY_APP_ID, endpoint),
+        searchSoldListings(query, 'psa10', env.EBAY_APP_ID, endpoint),
+      ]);
 
-      // Step 2: Search eBay Browse API for completed/active card listings
-      const results = await searchEbay(query, limit, token, hosts);
-
-      return jsonResponse(results, 200, origin);
+      return jsonResponse({
+        raw:    rawResults,
+        psa10:  psa10Results,
+        source: 'ebay_sold',
+        query:  query,
+      }, 200, origin);
 
     } catch (err) {
       console.error('eBay proxy error:', err.message);
-      // Return error details in development, generic message in production
       const msg = env.ENVIRONMENT === 'development' ? err.message : 'eBay search failed';
-      return jsonResponse({ error: msg, items: [], total: 0 }, 502, origin);
+      return jsonResponse({ error: msg, raw: [], psa10: [], source: 'error' }, 502, origin);
     }
   },
 };
 
-// ─── OAuth Token Management ─────────────────────────────────────────────────
+// ─── Finding API Search ──────────────────────────────────────────────────────
 
 /**
- * Returns a valid eBay OAuth access token, refreshing if expired.
+ * Searches eBay completed/sold listings using the Finding API.
  *
- * eBay uses the Client Credentials grant for app-level access (no user login).
- * POST https://api.ebay.com/identity/v1/oauth2/token
- *   Authorization: Basic base64(clientId:clientSecret)
- *   Body: grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope
+ * The Finding API is separate from the Browse API and uses the App ID
+ * directly as a query parameter — no OAuth needed.
  *
- * Token lifetime is typically 7,200 seconds (2 hours).
- * We refresh 5 minutes early to avoid serving with an about-to-expire token.
+ * Endpoint: GET https://svcs.ebay.com/services/search/FindingService/v1
+ *   ?OPERATION-NAME=findCompletedItems
+ *   &SECURITY-APPNAME={appId}
+ *   &keywords={query}
+ *   &itemFilter(0).name=SoldItemsOnly&itemFilter(0).value=true
+ *   etc.
  *
- * For high-traffic deployments: store cachedToken/tokenExpiry in Cloudflare KV
- * so the cache survives isolate restarts:
- *   await env.KV.put('ebay_token', token, { expirationTtl: expiresIn - 300 });
+ * @param {string} playerName
+ * @param {'raw'|'psa10'} type
+ * @param {string} appId
+ * @param {string} endpoint
+ * @returns {object[]} normalized sold listing objects
  */
-async function getToken(env, hosts) {
-  const BUFFER_MS = 5 * 60 * 1000; // 5 min early refresh buffer
+async function searchSoldListings(playerName, type, appId, endpoint) {
+  // Build search keywords based on type
+  // Raw: Bowman Chrome auto, exclude grading companies and noise
+  // PSA 10: specifically graded PSA 10 Bowman Chrome auto
+  const keywords = type === 'psa10'
+    ? `"${playerName}" "bowman chrome" auto "PSA 10"`
+    : `"${playerName}" "bowman chrome" auto -PSA -BGS -SGC -redemption -lot -reprint`;
 
-  if (cachedToken && Date.now() < tokenExpiry - BUFFER_MS) {
-    return cachedToken; // Still valid
-  }
-
-  // Build Basic auth header: base64(clientId:clientSecret)
-  const credentials = btoa(`${env.EBAY_CLIENT_ID}:${env.EBAY_CLIENT_SECRET}`);
-
-  const res = await fetch(hosts.auth, {
-    method: 'POST',
-    headers: {
-      'Authorization':  `Basic ${credentials}`,
-      'Content-Type':   'application/x-www-form-urlencoded',
-    },
-    // scope must be URL-encoded
-    body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
+  // Build Finding API query string
+  // All params must be URL-encoded
+  const params = new URLSearchParams({
+    'OPERATION-NAME':          'findCompletedItems',
+    'SERVICE-VERSION':         '1.0.0',
+    'SECURITY-APPNAME':        appId,
+    'RESPONSE-DATA-FORMAT':    'JSON',
+    'REST-PAYLOAD':            '',
+    'keywords':                keywords,
+    'sortOrder':               'EndTimeSoonest',  // most recently sold first
+    'paginationInput.entriesPerPage': '20',
+    // Category 261328 = Sports Trading Cards
+    'categoryId':              '261328',
+    // Filter 1: sold items only
+    'itemFilter(0).name':      'SoldItemsOnly',
+    'itemFilter(0).value':     'true',
+    // Filter 2: listing type — auctions and fixed price
+    'itemFilter(1).name':      'ListingType',
+    'itemFilter(1).value(0)':  'Auction',
+    'itemFilter(1).value(1)':  'FixedPrice',
+    'itemFilter(1).value(2)':  'AuctionWithBIN',
+    // Output selectors for the fields we need
+    'outputSelector(0)':       'SellingStatus',
+    'outputSelector(1)':       'PictureURLLarge',
   });
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`eBay token error ${res.status}: ${body}`);
-  }
+  const res = await fetch(`${endpoint}?${params.toString()}`);
+  if (!res.ok) throw new Error(`Finding API ${res.status}: ${await res.text()}`);
 
   const data = await res.json();
 
-  if (!data.access_token) {
-    throw new Error('eBay token response missing access_token');
-  }
+  // Navigate Finding API response structure
+  // findCompletedItemsResponse[0].searchResult[0].item[]
+  const items = data?.findCompletedItemsResponse?.[0]
+    ?.searchResult?.[0]?.item || [];
 
-  // Cache the token in module scope
-  cachedToken  = data.access_token;
-  tokenExpiry  = Date.now() + (data.expires_in * 1000);
-
-  return cachedToken;
+  return items
+    .filter(item => !isNoiseListing(item, type))
+    .map(item => normalizeSoldItem(item, type))
+    .filter(item => item.price > 0)
+    .slice(0, 15);
 }
 
-// ─── eBay Browse API Search ─────────────────────────────────────────────────
-
 /**
- * Searches eBay for baseball card listings matching a player name.
- *
- * Endpoint: GET /buy/browse/v1/item_summary/search
- *   q        = "Jackson Holliday rookie card"
- *   filter   = buyingOptions:{FIXED_PRICE}   → buy-it-now listings
- *   sort     = newlyListed                   → most recent first
- *   limit    = 10
- *   category_ids = 261328                    → Sports Trading Cards category
- *
- * Note: The Browse API returns ACTIVE listings, not completed/sold ones.
- * The completed listings API (Finding API) uses a different auth scheme.
- * Active listing prices are a strong proxy for current market value.
- * We label these as "Current Listings" in the UI, not "Sold Prices".
- *
- * Response items are normalized to our internal shape before returning.
+ * Filters out listings that are noise — lots, redemptions, reprints, etc.
+ * The Finding API keyword exclusions (-PSA etc.) help but aren't perfect.
  */
-async function searchEbay(playerName, limit, token, hosts) {
-  const query = encodeURIComponent(`${playerName} rookie card`);
+function isNoiseListing(item, type) {
+  const title = (item.title?.[0] || '').toUpperCase();
 
-  // Category 261328 = Sports Trading Cards on eBay
-  const url = `${hosts.browse}/item_summary/search`
-    + `?q=${query}`
-    + `&category_ids=261328`
-    + `&filter=buyingOptions%3A%7BFIXED_PRICE%7D`  // URL-encoded {FIXED_PRICE}
-    + `&sort=newlyListed`
-    + `&limit=${limit}`;
+  // Always exclude
+  if (/\bLOT\b|\d+\s*CARDS?\b/.test(title))    return true; // multi-card lots
+  if (/REPRINT|REPLICA|CUSTOM|FAKE/.test(title)) return true; // reprints
+  if (/REDEMPTION(?!\s*REDEEMED)/.test(title))   return true; // unredeemed redemptions
 
-  const res = await fetch(url, {
-    headers: {
-      'Authorization':              `Bearer ${token}`,
-      'X-EBAY-C-MARKETPLACE-ID':   'EBAY_US',
-      'Content-Type':               'application/json',
-    },
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`eBay Browse API ${res.status}: ${body}`);
+  // For raw searches, double-check no grading company slipped through
+  if (type === 'raw') {
+    if (/\bPSA\b|\bBGS\b|\bSGC\b|\bCSG\b|\bBVG\b/.test(title)) return true;
   }
 
-  const data = await res.json();
-  const items = data.itemSummaries || [];
+  // For PSA 10, make sure it's actually graded PSA 10 (not PSA 9 or other)
+  if (type === 'psa10') {
+    if (!/PSA\s*10/.test(title)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Normalizes a raw Finding API item into our internal shape.
+ *
+ * Finding API item structure (relevant fields):
+ * {
+ *   title: ['Player Name Bowman Chrome Auto PSA 10'],
+ *   sellingStatus: [{ currentPrice: [{ __value__: '145.00' }], sellingState: ['EndedWithSales'] }],
+ *   listingInfo: [{ endTime: ['2025-04-15T...'] }],
+ *   viewItemURL: ['https://www.ebay.com/itm/...']
+ * }
+ */
+function normalizeSoldItem(item, type) {
+  const title     = item.title?.[0] || '';
+  const priceRaw  = item.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'];
+  const price     = parseFloat(priceRaw) || 0;
+  const endTime   = item.listingInfo?.[0]?.endTime?.[0] || null;
+  const itemUrl   = item.viewItemURL?.[0] || '';
+
+  // Extract parallel type from title
+  const parallel  = extractParallel(title);
 
   return {
-    total: data.total || 0,
-    query: playerName,
-    source: 'ebay_live',
-    items: items.map(normalizeItem),
+    title,
+    price,
+    type,           // 'raw' or 'psa10'
+    parallel,       // e.g. 'Refractor', 'Gold Refractor', 'Base', null
+    date:     endTime,
+    itemUrl,
   };
 }
 
 /**
- * Normalizes a raw eBay item_summary object to our internal shape.
- * Keeps only what the frontend needs — strips bulky/sensitive fields.
+ * Extracts the card parallel from the listing title.
+ * Checks for common Bowman Chrome parallel names in order of rarity.
  */
-function normalizeItem(item) {
-  return {
-    title:       item.title         || '',
-    price:       parseFloat(item.price?.value || 0),
-    currency:    item.price?.currency || 'USD',
-    condition:   item.condition     || '',
-    conditionId: item.conditionId   || '',
-    listingDate: item.itemCreationDate || null,
-    itemWebUrl:  item.itemWebUrl    || '',
-    imageUrl:    item.image?.imageUrl || null,
-    seller:      item.seller?.username || '',
-    // Derive a simple "grade" label from condition text
-    grade: extractGrade(item.title, item.condition),
-  };
+function extractParallel(title) {
+  const t = title.toUpperCase();
+  if (/SUPERFRACTOR|SUPERFRACTOR/.test(t))              return 'Superfractor 1/1';
+  if (/BLACK\s*REFRACTOR/.test(t))                      return 'Black Refractor';
+  if (/ORANGE\s*REFRACTOR/.test(t))                     return 'Orange Refractor';
+  if (/RED\s*REFRACTOR/.test(t))                        return 'Red Refractor';
+  if (/GOLD\s*REFRACTOR/.test(t))                       return 'Gold Refractor';
+  if (/PURPLE\s*REFRACTOR/.test(t))                     return 'Purple Refractor';
+  if (/BLUE\s*REFRACTOR/.test(t))                       return 'Blue Refractor';
+  if (/GREEN\s*REFRACTOR/.test(t))                      return 'Green Refractor';
+  if (/ATOMIC\s*REFRACTOR/.test(t))                     return 'Atomic Refractor';
+  if (/PRISM\s*REFRACTOR/.test(t))                      return 'Prism Refractor';
+  if (/\bREFRACTOR\b/.test(t))                          return 'Refractor';
+  if (/SAPPHIRE/.test(t))                               return 'Sapphire';
+  if (/1ST\s*(BOWMAN|AUTO)|FIRST\s*BOWMAN/.test(t))     return '1st Bowman';
+  return 'Base';
 }
 
-/**
- * Extracts a card grade label from the item title or condition string.
- * Looks for PSA/BGS/SGC grade patterns.
- * Returns null if ungraded.
- */
-function extractGrade(title = '', condition = '') {
-  const text = `${title} ${condition}`.toUpperCase();
-
-  // PSA grades: "PSA 10", "PSA10", "PSA GEM MT 10"
-  const psaMatch = text.match(/PSA\s*(?:GEM\s*MT\s*)?(\d+(?:\.\d+)?)/);
-  if (psaMatch) return `PSA ${psaMatch[1]}`;
-
-  // BGS/Beckett grades: "BGS 9.5", "BECKETT 9"
-  const bgsMatch = text.match(/(?:BGS|BECKETT)\s*(\d+(?:\.\d+)?)/);
-  if (bgsMatch) return `BGS ${bgsMatch[1]}`;
-
-  // SGC grades
-  const sgcMatch = text.match(/SGC\s*(\d+)/);
-  if (sgcMatch) return `SGC ${sgcMatch[1]}`;
-
-  // Raw/ungraded
-  if (text.includes('RAW') || condition.toLowerCase().includes('near mint')) return 'Raw NM';
-
-  return null;
-}
-
-// ─── Mock Data Generator ─────────────────────────────────────────────────────
+// ─── Mock Data ───────────────────────────────────────────────────────────────
 
 /**
- * Generates realistic-looking eBay listing data for UI development
- * while waiting for eBay developer account approval.
+ * Generates realistic-looking sold price data for UI development.
+ * Prices are seeded from player name for consistency across sessions.
+ * Raw autos typically sell for 10-20% of PSA 10 value.
  *
- * Prices are seeded from the player name so the same player always
- * gets consistent mock prices (makes UI testing predictable).
- *
- * DELETE this function and the mock check in the main handler
- * once your eBay developer account is approved.
+ * DELETE or comment out once eBay Finding API is confirmed working.
  */
-function generateMockListings(playerName, count = 10) {
-  // Simple deterministic seed from player name characters
-  const seed = playerName.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  const rng  = seededRandom(seed);
+function generateMockSoldListings(playerName) {
+  const seed    = playerName.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const rng     = seededRandom(seed);
+  const baseRaw = 15 + (seed % 60);      // $15–$75 for raw
+  const basePsa = baseRaw * (4 + rng()); // PSA 10 ~4-5x raw
 
-  // Base price scaled loosely by "fame" (longer name = more letters = more random)
-  const basePrice = 8 + (seed % 80);
+  const parallels = ['Base', 'Refractor', 'Blue Refractor', 'Gold Refractor', 'Orange Refractor'];
+  const now       = Date.now();
 
-  const grades    = ['PSA 10', 'PSA 9', 'PSA 8', 'BGS 9.5', 'BGS 9', 'Raw NM', 'Raw', null];
-  const gradeMult = [3.5,       1.8,     1.1,     2.8,        1.5,     0.9,      0.7,   0.8];
-  const sets      = [
-    'Topps Chrome Rookie Autograph',
-    'Bowman Chrome 1st Prospect Auto',
-    'Topps Chrome Update RC',
-    'Bowman Draft Prospect',
-    'Topps Series 1 Rookie Card',
-    'Panini Prizm Draft Picks',
-    'Topps Heritage Minor League RC',
-    'Bowman Platinum Prospect',
-  ];
-
-  const now = Date.now();
-
-  const items = Array.from({ length: count }, (_, i) => {
-    const gradeIdx  = Math.floor(rng() * grades.length);
-    const grade     = grades[gradeIdx];
-    const mult      = gradeMult[gradeIdx];
-    const setName   = sets[Math.floor(rng() * sets.length)];
-    const priceJitter = 0.75 + rng() * 0.50; // ±25% variance
-    const price     = parseFloat((basePrice * mult * priceJitter).toFixed(2));
-    const daysAgo   = Math.floor(rng() * 30);
-    const listDate  = new Date(now - daysAgo * 86_400_000).toISOString();
-    const title     = `${playerName} ${setName} ${grade ? grade + ' ' : ''}Baseball Card`;
-    const ebayId    = 1234567890 + seed + i;
-
-    return {
-      title,
-      price,
-      currency:    'USD',
-      condition:   grade ? 'Graded' : 'Near Mint or Better',
-      conditionId: grade ? '2750' : '3000',
-      listingDate: listDate,
-      itemWebUrl:  `https://www.ebay.com/itm/${ebayId}`,
-      imageUrl:    null,
-      seller:      'mock_seller',
-      grade:       grade,
-    };
-  });
-
-  // Sort by most recently listed
-  items.sort((a, b) => new Date(b.listingDate) - new Date(a.listingDate));
+  const makeItems = (basePrice, type, count) =>
+    Array.from({ length: count }, (_, i) => {
+      const daysAgo  = Math.floor(rng() * 45);
+      const jitter   = 0.75 + rng() * 0.50;
+      const parallel = type === 'psa10' ? 'Base' : parallels[Math.floor(rng() * parallels.length)];
+      // Parallels command premium on raw
+      const parallelMult = { Base: 1, Refractor: 1.5, 'Blue Refractor': 2, 'Gold Refractor': 4, 'Orange Refractor': 6 }[parallel] || 1;
+      return {
+        title:    `${playerName} Bowman Chrome Auto ${parallel} ${type === 'psa10' ? 'PSA 10' : ''}`.trim(),
+        price:    parseFloat((basePrice * jitter * (type === 'raw' ? parallelMult : 1)).toFixed(2)),
+        type,
+        parallel,
+        date:     new Date(now - daysAgo * 86_400_000).toISOString(),
+        itemUrl:  `https://www.ebay.com/itm/${1234567890 + seed + i}`,
+      };
+    }).sort((a, b) => new Date(b.date) - new Date(a.date));
 
   return {
-    total:  count,
+    raw:    makeItems(baseRaw,  'raw',   12),
+    psa10:  makeItems(basePsa, 'psa10', 10),
+    source: 'mock',
     query:  playerName,
-    source: 'mock',      // Frontend uses this to show a "Mock data" badge
-    items,
   };
 }
 
-/** Simple seeded pseudo-random number generator (mulberry32) */
 function seededRandom(seed) {
   let s = seed;
-  return function() {
+  return () => {
     s |= 0; s = s + 0x6D2B79F5 | 0;
     let t = Math.imul(s ^ s >>> 15, 1 | s);
     t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
@@ -355,9 +298,6 @@ function corsHeaders(origin) {
 function jsonResponse(data, status, origin) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      'Content-Type': 'application/json',
-      ...corsHeaders(origin),
-    },
+    headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) },
   });
 }
