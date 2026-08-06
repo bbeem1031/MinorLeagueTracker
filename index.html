@@ -1566,12 +1566,17 @@ function applyFilters() {
     list = list.filter(p => (p.hotScore ?? 0) >= state.minScore);
   }
 
-  // Cold mode: show players performing below thresholds
-  if (state.mode === 'cold') {
+  // Hot mode: exclude players with no stats at all (0 AB, not yet played)
+  // Cold mode: only players clearly underperforming
+  if (state.mode === 'hot') {
+    list = list.filter(p => (p.seasonPA || 0) > 0 || (p.windowPA || 0) > 0);
+  } else {
+    // Cold: clearly below average BA and OPS using best available stats
     list = list.filter(p => {
-      const ba  = p.windowBA  ?? p.seasonBA  ?? 1;
-      const ops = p.windowOPS ?? p.seasonOPS ?? 1;
-      return ba < 0.250 && ops < 0.650;
+      const ba  = p.windowBA  ?? p.seasonBA  ?? null;
+      const ops = p.windowOPS ?? p.seasonOPS ?? null;
+      if (ba === null || ops === null) return false; // need stats to show cold
+      return ba < 0.230 && ops < 0.630;
     });
   }
 
@@ -2461,6 +2466,111 @@ function highlightMatch(name, query) {
     + name.slice(idx + query.length);
 }
 
+/**
+ * Fetches ALL players for a specific MLB organization across all MiLB levels.
+ * Used when the org filter is selected to ensure no players are missed.
+ *
+ * Strategy:
+ *   1. Find all affiliate team IDs for the selected parent org from state.teamMap
+ *   2. For each affiliate, GET /api/v1/teams/{teamId}/roster?rosterType=fullSeason
+ *   3. For each player not already in state.players, fetch their season stats
+ *   4. Add them to state.players so they appear in the leaderboard
+ *
+ * GET https://statsapi.mlb.com/api/v1/teams/{teamId}/roster?rosterType=fullSeason&season={year}
+ */
+async function fetchOrgRoster(parentOrgId) {
+  const year = CONFIG.SEASON;
+
+  // Find all affiliate team IDs for this org from the team map
+  const affiliateIds = Object.entries(state.teamMap)
+    .filter(([, info]) => String(info.parentOrgId) === String(parentOrgId))
+    .map(([teamId]) => parseInt(teamId));
+
+  if (!affiliateIds.length) return;
+
+  setFetchStatus(`Loading full ${state.players.find(p => String(p.parentOrgId) === String(parentOrgId))?.parentOrg || 'org'} roster…`);
+  showFetchUI(true);
+
+  const newPlayers = [];
+
+  await Promise.all(affiliateIds.map(async teamId => {
+    try {
+      // GET /api/v1/teams/{teamId}/roster?rosterType=fullSeason&season={year}
+      const url = `${CONFIG.MLB_BASE}/teams/${teamId}/roster?rosterType=fullSeason&season=${year}`;
+      const cacheKey = `roster_${teamId}_${year}`;
+      const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.leaders);
+      const roster = data.roster || [];
+
+      // Fetch season stats for players not already in state
+      const missing = roster.filter(r => !state.players.find(p => p.id === r.person?.id));
+      if (!missing.length) return;
+
+      // Batch fetch stats for missing players (personIds comma-separated)
+      const ids = missing.map(r => r.person.id).join(',');
+      const statsUrl = `${CONFIG.MLB_BASE}/people?personIds=${ids}`
+        + `&hydrate=stats(group=hitting,type=season,season=${year}),currentTeam`;
+      const statsData = await fetchCached(statsUrl, `org_stats_${teamId}_${year}`, CONFIG.CACHE_TTL.leaders);
+      const people = statsData.people || [];
+
+      const teamInfo = state.teamMap[teamId] || {};
+
+      people.forEach(person => {
+        const split = person.stats?.find(s => s.group?.displayName === 'hitting')?.splits?.[0];
+        if (!split && !person.stats?.length) return; // no hitting stats
+
+        const s = split?.stat || {};
+        const player = {
+          id:           person.id,
+          name:         person.fullName,
+          affiliateName: person.currentTeam?.name || '—',
+          parentOrg:    teamInfo.parentOrg || '—',
+          parentOrgId:  teamInfo.parentOrgId || parentOrgId,
+          level:        teamInfo.level || '?',
+          position:     person.primaryPosition?.abbreviation || null,
+          age:          person.currentAge || null,
+          bats:         person.batSide?.code || null,
+          throws:       person.pitchHand?.code || null,
+          seasonG:      s.gamesPlayed      || 0,
+          seasonBA:     parseFloat(s.avg)  || 0,
+          seasonOBP:    parseFloat(s.obp)  || 0,
+          seasonSLG:    parseFloat(s.slg)  || 0,
+          seasonOPS:    parseFloat(s.ops)  || 0,
+          seasonHR:     s.homeRuns         || 0,
+          seasonSB:     s.stolenBases      || 0,
+          seasonRBI:    s.rbi              || 0,
+          seasonPA:     s.plateAppearances || 0,
+          windowBA: null, windowOPS: null, windowOBP: null, windowSLG: null,
+          windowHR: null, windowSB: null, windowPA: null,
+          recentBA: [], hotScore: null, hotScoreSource: null,
+          baScore: null, opsScore: null, momentumScore: null, levelScore: null,
+          cardPrice: null, recentPrices: [], cardPriceTrend: null, ebayListings: null,
+        };
+        calcHotScore(player);
+        newPlayers.push(player);
+      });
+    } catch (err) {
+      console.warn(`Roster fetch failed for team ${teamId}:`, err.message);
+    }
+  }));
+
+  // Add new players to state (no dupes)
+  newPlayers.forEach(p => {
+    if (!state.players.find(existing => existing.id === p.id)) {
+      state.players.push(p);
+    }
+  });
+
+  // Fetch window stats for the new players in background
+  if (newPlayers.length > 0) {
+    setFetchStatus(`Loading window stats for ${newPlayers.length} additional players…`);
+    batchFetchWindowStats(newPlayers).then(() => {
+      applyFilters(); renderLeaderboard(); renderSummaryStats();
+    });
+  }
+
+  hideFetchUI();
+}
+
 // ═══════════════════════════════════════════════════════════════
 // EVENT LISTENERS
 // ═══════════════════════════════════════════════════════════════
@@ -2528,9 +2638,16 @@ function bindEvents() {
     applyFilters(); renderLeaderboard(); renderSummaryStats();
   }));
 
-  // Org select
-  document.getElementById('org-filter').addEventListener('change', e => {
-    state.org = e.target.value; applyFilters(); renderLeaderboard(); renderSummaryStats();
+  // Org select — fetches full team roster when an org is selected
+  document.getElementById('org-filter').addEventListener('change', async e => {
+    state.org = e.target.value;
+    applyFilters(); renderLeaderboard(); renderSummaryStats();
+
+    // If a specific org is selected, fetch ALL their players from each affiliate team
+    if (state.org !== 'all') {
+      await fetchOrgRoster(state.org);
+      applyFilters(); renderLeaderboard(); renderSummaryStats();
+    }
   });
 
   // Age range
