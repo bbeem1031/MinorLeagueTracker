@@ -715,29 +715,24 @@
             <span>eBay Card Price · Bowman Chrome Auto</span>
             <span id="price-trend-badge" class="price-trend-badge stable">—</span>
           </div>
-          <!-- Tab switcher -->
+
+          <!-- Type tabs: Raw / PSA 10 -->
           <div class="price-tabs" role="tablist" aria-label="Card price type">
-            <button class="price-tab active" data-tab="raw" role="tab" aria-selected="true">
-              Raw Auto
-            </button>
-            <button class="price-tab" data-tab="psa10" role="tab" aria-selected="false">
-              PSA 10
-            </button>
+            <button class="price-tab active" data-tab="raw"   role="tab" aria-selected="true">Raw Auto</button>
+            <button class="price-tab"        data-tab="psa10" role="tab" aria-selected="false">PSA 10</button>
           </div>
-          <!-- Raw chart -->
-          <div class="price-tab-panel" id="tab-panel-raw" role="tabpanel">
-            <div class="chart-container" style="height:160px;">
-              <canvas id="price-chart-raw" role="img" aria-label="Raw auto sold price chart">Raw auto sold price chart.</canvas>
-            </div>
-            <div class="price-summary" id="price-summary-raw"></div>
+
+          <!-- Parallel filter pills — populated dynamically from API results -->
+          <div id="parallel-filter-wrap" style="margin-bottom:10px;">
+            <div style="font-size:9px;font-family:var(--font-mono);letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;">Parallel</div>
+            <div id="parallel-pills" class="filter-pills" role="group" aria-label="Filter by parallel"></div>
           </div>
-          <!-- PSA 10 chart -->
-          <div class="price-tab-panel" id="tab-panel-psa10" role="tabpanel" style="display:none;">
-            <div class="chart-container" style="height:160px;">
-              <canvas id="price-chart-psa10" role="img" aria-label="PSA 10 sold price chart">PSA 10 sold price chart.</canvas>
-            </div>
-            <div class="price-summary" id="price-summary-psa10"></div>
+
+          <!-- Chart — one line per selected parallel -->
+          <div class="chart-container" style="height:180px;">
+            <canvas id="price-chart-main" role="img" aria-label="Card price chart by parallel">Card price chart.</canvas>
           </div>
+          <div class="price-summary" id="price-summary-main"></div>
         </div>
       </div>
 
@@ -754,10 +749,10 @@
         </div>
       </div>
 
-      <!-- eBay table — tabbed to match price charts -->
+      <!-- eBay sold table — filtered to match chart selection -->
       <div class="modal-stat-box">
         <div class="modal-stat-box-label">
-          <span id="ebay-table-label">Recent Sold · Raw Auto</span>
+          <span id="ebay-table-label">Recent Sold · Raw Auto · Base</span>
           <a href="#" id="ebay-search-link" target="_blank" rel="noopener" style="color:var(--gold-dim);font-size:10px;text-decoration:none;">View on eBay ↗</a>
         </div>
         <table class="ebay-table" aria-label="Recent eBay sold listings">
@@ -2042,9 +2037,7 @@ async function openPlayerModal(playerId) {
     }).catch(err => console.warn('Game log fetch failed:', err));
   }
 
-  // ── Lazy-load 3: eBay sold prices (Bowman Chrome auto, raw + PSA 10) ─────
-  // Worker calls eBay Finding API for completed/sold listings only.
-  // Returns { raw: [], psa10: [], source: 'ebay_sold'|'mock' }
+  // ── Lazy-load 3: eBay sold prices ────────────────────────────────────────
   if (!player.ebayListings) {
     setEbayLoading(true);
     fetchEbayPrices(player.name).then(result => {
@@ -2054,24 +2047,13 @@ async function openPlayerModal(playerId) {
       player.ebaySource    = result.source;
       player.rawSales      = result.raw   || [];
       player.psa10Sales    = result.psa10 || [];
-      player.rawPrices     = extractPricesSorted(player.rawSales);
-      player.psa10Prices   = extractPricesSorted(player.psa10Sales);
-      player.cardPrice     = latestPrice(player.rawSales);
+      player.rawPrices     = extractPricesSorted(player.rawSales.filter(s => s.parallel === 'Base'));
+      player.cardPrice     = latestPrice(player.rawSales.filter(s => s.parallel === 'Base'));
       player.cardPriceTrend = priceTrend(player.rawPrices);
 
-      // Update trend badge
-      const trend = player.cardPriceTrend || 'stable';
-      const badge = document.getElementById('price-trend-badge');
-      badge.textContent = trend.charAt(0).toUpperCase() + trend.slice(1);
-      badge.className   = `price-trend-badge ${trend}`;
-
-      // Draw both charts
-      drawPriceChart(player.rawPrices,   'raw',   player.ebaySource);
-      drawPriceChart(player.psa10Prices, 'psa10', player.ebaySource);
-      renderEbayTable(player.rawSales, player.ebaySource, 'raw');
+      initEbayUI(player.rawSales, player.psa10Sales, player.ebaySource);
       setEbayLoading(false);
 
-      // Update eBay links
       const ebayQ = encodeURIComponent(`${player.name} bowman chrome auto`);
       ['ebay-search-link','ebay-link'].forEach(id => {
         const el = document.getElementById(id);
@@ -2081,11 +2063,12 @@ async function openPlayerModal(playerId) {
       console.warn('eBay fetch failed:', err);
       setEbayLoading(false);
     });
+  } else {
+    initEbayUI(player.rawSales || [], player.psa10Sales || [], player.ebaySource || 'mock');
   }
 
-  // ── Tab switcher ───────────────────────────────────────────────────────────
+  // ── Tab switcher (Raw / PSA 10) ───────────────────────────────────────────
   document.querySelectorAll('.price-tab').forEach(tab => {
-    // Clone to remove old listeners from previous modal open
     const fresh = tab.cloneNode(true);
     tab.parentNode.replaceChild(fresh, tab);
     fresh.addEventListener('click', () => {
@@ -2094,12 +2077,11 @@ async function openPlayerModal(playerId) {
         t.classList.toggle('active', t.dataset.tab === type);
         t.setAttribute('aria-selected', t.dataset.tab === type);
       });
-      document.querySelectorAll('.price-tab-panel').forEach(panel => {
-        panel.style.display = panel.id === `tab-panel-${type}` ? 'block' : 'none';
-      });
-      // Update table to match tab
-      const items = type === 'psa10' ? (player.psa10Sales || []) : (player.rawSales || []);
-      renderEbayTable(items, player.ebaySource || 'mock', type);
+      ebayState.activeType = type;
+      ebayState.selectedParallels = new Set(['Base']); // reset to Base on tab switch
+      buildParallelPills();
+      redrawPriceChart();
+      redrawEbayTable();
     });
   });
 }
@@ -2110,10 +2092,8 @@ function closePlayerModal() {
   if (state.sparklineChart)  { state.sparklineChart.destroy();  state.sparklineChart = null; }
   if (state.priceChart)      { state.priceChart.destroy();      state.priceChart = null; }
   if (state.priceChartPsa10) { state.priceChartPsa10.destroy(); state.priceChartPsa10 = null; }
-  // Reset tabs to raw
+  // Reset tabs to raw default
   document.querySelectorAll('.price-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'raw'));
-  document.getElementById('tab-panel-raw')?.style && (document.getElementById('tab-panel-raw').style.display = 'block');
-  document.getElementById('tab-panel-psa10')?.style && (document.getElementById('tab-panel-psa10').style.display = 'none');
 }
 
 function drawSparklineChart(baValues) {
@@ -2153,138 +2133,282 @@ function drawSparklineChart(baValues) {
   });
 }
 
+// ─── Parallel color palette ─────────────────────────────────────────────────
+// Each parallel gets a distinct color for the multi-line chart.
+const PARALLEL_COLORS = {
+  'Base':              '#D4A017',   // gold
+  'Refractor':         '#4A9EFF',   // blue
+  'Blue Refractor':    '#38BDF8',   // light blue
+  'Green Refractor':   '#2DD4A0',   // green
+  'Purple Refractor':  '#C084FC',   // purple
+  'Red Refractor':     '#F87171',   // red
+  'Gold Refractor':    '#FCD34D',   // yellow-gold
+  'Orange Refractor':  '#FB923C',   // orange
+  'Black Refractor':   '#94A3B8',   // slate
+  'Atomic Refractor':  '#E879F9',   // pink
+  'Prism Refractor':   '#67E8F9',   // cyan
+  'Sapphire':          '#6366F1',   // indigo
+  '1st Bowman':        '#A3E635',   // lime
+  'Superfractor 1/1':  '#FF4444',   // bright red
+};
+
+function parallelColor(parallel) {
+  return PARALLEL_COLORS[parallel] || '#7A8499';
+}
+
 /**
- * Draws a price chart (raw or psa10) on the correct canvas.
- * Called when tab is switched or data first loads.
+ * eBay price state for the current modal.
+ * Tracks which type (raw/psa10) and which parallels are selected.
+ * Reset on each modal open.
  */
-function drawPriceChart(prices, type, source) {
-  const canvasId = type === 'psa10' ? 'price-chart-psa10' : 'price-chart-raw';
-  const chartKey = type === 'psa10' ? 'priceChartPsa10' : 'priceChart';
-  const ctx      = document.getElementById(canvasId)?.getContext('2d');
-  if (!ctx) return;
+const ebayState = {
+  activeType:       'raw',
+  selectedParallels: new Set(['Base']),  // default: Base only
+  rawSales:          [],
+  psa10Sales:        [],
+  source:            'mock',
+};
 
-  if (state[chartKey]) { state[chartKey].destroy(); state[chartKey] = null; }
+/**
+ * Called after eBay data loads. Builds parallel pills from available data,
+ * draws the chart, and renders the table — all filtered to Base by default.
+ */
+function initEbayUI(rawSales, psa10Sales, source) {
+  ebayState.rawSales   = rawSales   || [];
+  ebayState.psa10Sales = psa10Sales || [];
+  ebayState.source     = source     || 'mock';
+  ebayState.activeType = 'raw';
+  ebayState.selectedParallels = new Set(['Base']);
 
-  const hasData  = prices && prices.length > 0;
-  const isMock   = source === 'mock';
-  const color    = type === 'psa10' ? '#D4A017' : '#2DD4A0';
-  const trend    = priceTrend(prices);
-  const trendColor = trend === 'rising' ? '#2DD4A0' : trend === 'falling' ? '#E24B4A' : color;
+  buildParallelPills();
+  redrawPriceChart();
+  redrawEbayTable();
+}
 
-  state[chartKey] = new Chart(ctx, {
+/**
+ * Builds parallel filter pills from whichever sales are currently active.
+ * Pills are sorted by rarity order (Base first, then refractors, then rare).
+ */
+function buildParallelPills() {
+  const sales = ebayState.activeType === 'psa10' ? ebayState.psa10Sales : ebayState.rawSales;
+  const found = [...new Set(sales.map(s => s.parallel).filter(Boolean))];
+
+  // Sort by rarity — Base first, then common parallels, then rare ones
+  const order = Object.keys(PARALLEL_COLORS);
+  found.sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
+  const container = document.getElementById('parallel-pills');
+  if (!container) return;
+
+  container.innerHTML = found.map(parallel => {
+    const color    = parallelColor(parallel);
+    const selected = ebayState.selectedParallels.has(parallel);
+    return `
+      <button class="pill ${selected ? 'active' : ''}"
+        data-parallel="${parallel}"
+        style="${selected ? `border-color:${color};color:${color};background:${color}18;` : ''}"
+        aria-pressed="${selected}">
+        ${parallel}
+      </button>`;
+  }).join('');
+
+  // Bind pill clicks
+  container.querySelectorAll('.pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const p = pill.dataset.parallel;
+      if (ebayState.selectedParallels.has(p)) {
+        // Don't allow deselecting the last pill
+        if (ebayState.selectedParallels.size > 1) {
+          ebayState.selectedParallels.delete(p);
+          pill.classList.remove('active');
+          pill.style.cssText = '';
+          pill.setAttribute('aria-pressed', 'false');
+        }
+      } else {
+        ebayState.selectedParallels.add(p);
+        const color = parallelColor(p);
+        pill.classList.add('active');
+        pill.style.cssText = `border-color:${color};color:${color};background:${color}18;`;
+        pill.setAttribute('aria-pressed', 'true');
+      }
+      redrawPriceChart();
+      redrawEbayTable();
+    });
+  });
+}
+
+/**
+ * Redraws the multi-line price chart based on current type + parallel selection.
+ * One dataset (line) per selected parallel, color-coded.
+ */
+function redrawPriceChart() {
+  const canvas = document.getElementById('price-chart-main');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  if (state.priceChart) { state.priceChart.destroy(); state.priceChart = null; }
+
+  const sales     = ebayState.activeType === 'psa10' ? ebayState.psa10Sales : ebayState.rawSales;
+  const isMock    = ebayState.source === 'mock';
+  const parallels = [...ebayState.selectedParallels];
+
+  // Build one dataset per selected parallel
+  // Sort each parallel's sales oldest→newest for left-to-right timeline
+  const datasets = parallels.map(parallel => {
+    const items = sales
+      .filter(s => s.parallel === parallel && s.price > 0)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    const color = parallelColor(parallel);
+
+    return {
+      label:           parallel,
+      data:            items.map(s => ({ x: s.date ? new Date(s.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '?', y: s.price })),
+      borderColor:     color,
+      backgroundColor: color + '15',
+      fill:            parallels.length === 1, // fill only if single line
+      tension:         0.3,
+      pointRadius:     4,
+      pointBackgroundColor: color,
+      pointBorderColor:    '#0D1422',
+      pointBorderWidth:    1.5,
+      borderWidth:     2,
+      borderDash:      isMock ? [4, 4] : [],
+    };
+  }).filter(ds => ds.data.length > 0);
+
+  // Collect all date labels across all parallels (sorted)
+  const allLabels = [...new Set(
+    datasets.flatMap(ds => ds.data.map(d => d.x))
+  )];
+
+  // Convert dataset data to match label positions
+  const finalDatasets = datasets.map(ds => ({
+    ...ds,
+    data: allLabels.map(label => {
+      const pt = ds.data.find(d => d.x === label);
+      return pt ? pt.y : null;
+    }),
+  }));
+
+  state.priceChart = new Chart(ctx, {
     type: 'line',
-    data: {
-      labels: hasData ? prices.map((_, i) => `#${i + 1}`) : ['—'],
-      datasets: [{
-        label: type === 'psa10' ? 'PSA 10' : 'Raw',
-        data: hasData ? prices : [0],
-        borderColor: trendColor,
-        backgroundColor: trendColor + '18',
-        fill: true, tension: 0.2,
-        pointRadius: 4, pointBackgroundColor: trendColor,
-        pointBorderColor: '#0D1422', pointBorderWidth: 1.5, borderWidth: 2,
-        borderDash: isMock ? [4, 4] : [],
-      }]
-    },
+    data: { labels: allLabels, datasets: finalDatasets },
     options: {
-      responsive: true, maintainAspectRatio: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      spanGaps: false,
       plugins: {
-        legend: { display: false },
+        legend: {
+          display: parallels.length > 1,
+          labels: { color: '#7A8499', font: { family: "'IBM Plex Mono'", size: 10 }, boxWidth: 12, padding: 8 }
+        },
         tooltip: {
           backgroundColor: '#131928', bodyColor: '#F0EDE6',
           borderColor: 'rgba(212,160,23,0.3)', borderWidth: 1,
-          callbacks: { label: ctx => hasData ? (isMock ? '~' : '') + '$' + ctx.parsed.y.toFixed(2) : 'No data' }
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${isMock ? '~' : ''}$${ctx.parsed.y?.toFixed(2) ?? '—'}`
+          }
         }
       },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 } } },
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 9 }, maxTicksLimit: 8, maxRotation: 0 } },
         y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#4A5266', font: { family: "'IBM Plex Mono'", size: 10 }, callback: v => '$' + v.toFixed(0), maxTicksLimit: 5 } }
       }
     }
   });
 
-  // Render price summary below chart
-  renderPriceSummary(type, prices, trend, isMock);
+  // Update trend badge and summary using selected parallels combined
+  const allSelected = sales.filter(s => ebayState.selectedParallels.has(s.parallel) && s.price > 0)
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const prices = allSelected.map(s => s.price);
+  const trend  = priceTrend(prices);
+  const badge  = document.getElementById('price-trend-badge');
+  if (badge) { badge.textContent = trend.charAt(0).toUpperCase() + trend.slice(1); badge.className = `price-trend-badge ${trend}`; }
+
+  renderPriceSummary(prices, trend, isMock);
+  updateEbayTableLabel();
 }
 
-/** Renders avg/latest/trend summary below the price chart */
-function renderPriceSummary(type, prices, trend, isMock) {
-  const el = document.getElementById(`price-summary-${type}`);
+/** Updates the table label to reflect current selections */
+function updateEbayTableLabel() {
+  const el = document.getElementById('ebay-table-label');
+  if (!el) return;
+  const type      = ebayState.activeType === 'psa10' ? 'PSA 10' : 'Raw Auto';
+  const parallels = [...ebayState.selectedParallels].join(', ');
+  const isMock    = ebayState.source === 'mock';
+  el.innerHTML = `Recent Sold · ${type} · ${parallels}` +
+    (isMock ? ' <span style="font-size:9px;background:rgba(122,132,153,0.2);color:var(--text-dim);padding:2px 6px;border-radius:3px;margin-left:4px;">MOCK</span>'
+             : ' <span style="font-size:9px;background:rgba(45,212,160,0.1);color:var(--green);padding:2px 6px;border-radius:3px;margin-left:4px;">LIVE</span>');
+}
+
+/** Renders the price summary (avg/latest/trend/count) below the chart */
+function renderPriceSummary(prices, trend, isMock) {
+  const el = document.getElementById('price-summary-main');
   if (!el) return;
   if (!prices || !prices.length) {
-    el.innerHTML = `<span style="font-size:12px;color:var(--text-dim);">No sold listings found</span>`;
+    el.innerHTML = `<span style="font-size:12px;color:var(--text-dim);">No sales found for selected filters</span>`;
     return;
   }
   const avg    = prices.reduce((a, b) => a + b, 0) / prices.length;
   const latest = prices[prices.length - 1];
-  const trendLabel = { rising: '↑ Rising', falling: '↓ Falling', stable: '→ Stable' }[trend];
+  const trendLabel = { rising: '↑ Rising', falling: '↓ Falling', stable: '→ Stable' }[trend] || '→';
   const trendColor = { rising: 'var(--green)', falling: 'var(--red)', stable: 'var(--text-muted)' }[trend];
   el.innerHTML = `
-    <div class="price-summary-stat">
-      <div class="price-summary-val">${isMock ? '~' : ''}$${avg.toFixed(0)}</div>
-      <div class="price-summary-label">Avg</div>
-    </div>
-    <div class="price-summary-stat">
-      <div class="price-summary-val">${isMock ? '~' : ''}$${latest.toFixed(0)}</div>
-      <div class="price-summary-label">Latest</div>
-    </div>
-    <div class="price-summary-stat">
-      <div class="price-summary-val" style="color:${trendColor}">${trendLabel}</div>
-      <div class="price-summary-label">Trend</div>
-    </div>
-    <div class="price-summary-stat">
-      <div class="price-summary-val">${prices.length}</div>
-      <div class="price-summary-label">Sales</div>
-    </div>`;
+    <div class="price-summary-stat"><div class="price-summary-val">${isMock ? '~' : ''}$${avg.toFixed(0)}</div><div class="price-summary-label">Avg</div></div>
+    <div class="price-summary-stat"><div class="price-summary-val">${isMock ? '~' : ''}$${latest.toFixed(0)}</div><div class="price-summary-label">Latest</div></div>
+    <div class="price-summary-stat"><div class="price-summary-val" style="color:${trendColor}">${trendLabel}</div><div class="price-summary-label">Trend</div></div>
+    <div class="price-summary-stat"><div class="price-summary-val">${prices.length}</div><div class="price-summary-label">Sales</div></div>`;
 }
 
-/**
- * Renders the eBay sold listings table for the active tab (raw or psa10).
- */
-function renderEbayTable(items = [], source = 'ebay_sold', type = 'raw') {
-  const tbody    = document.getElementById('ebay-sales-body');
-  const labelEl  = document.getElementById('ebay-table-label');
-  const isMock   = source === 'mock';
-  const typeLabel = type === 'psa10' ? 'PSA 10' : 'Raw Auto';
+/** Renders the eBay table filtered to current type + selected parallels */
+function redrawEbayTable() {
+  const tbody  = document.getElementById('ebay-sales-body');
+  if (!tbody) return;
+  updateEbayTableLabel();
 
-  if (labelEl) {
-    labelEl.innerHTML = `Recent Sold · ${typeLabel}` +
-      (isMock ? ' <span style="font-size:9px;background:rgba(122,132,153,0.2);color:var(--text-dim);padding:2px 6px;border-radius:3px;margin-left:4px;">MOCK</span>' :
-                ' <span style="font-size:9px;background:rgba(45,212,160,0.1);color:var(--green);padding:2px 6px;border-radius:3px;margin-left:4px;">LIVE</span>');
-  }
+  const sales  = ebayState.activeType === 'psa10' ? ebayState.psa10Sales : ebayState.rawSales;
+  const isMock = ebayState.source === 'mock';
+  const items  = sales
+    .filter(s => ebayState.selectedParallels.has(s.parallel))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  if (!items || !items.length) {
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:16px;">No ${typeLabel} sales found</td></tr>`;
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:16px;">No sales found for selected filters</td></tr>`;
     return;
   }
 
-  // Sort newest first
-  const sorted = [...items].sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  tbody.innerHTML = sorted.map(item => {
-    const date  = item.date
-      ? new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      : '—';
-    const price = item.price ? (isMock ? '~' : '') + '$' + item.price.toFixed(2) : '—';
-    const parallel = item.parallel || '—';
-    const typeDisp = item.type === 'psa10' ? 'PSA 10' : 'Raw';
-    const rowUrl = item.itemUrl && !isMock
-      ? `onclick="window.open('${item.itemUrl}','_blank')" style="cursor:pointer;"` : '';
-
+  tbody.innerHTML = items.map(item => {
+    const date    = item.date ? new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+    const price   = item.price ? (isMock ? '~' : '') + '$' + item.price.toFixed(2) : '—';
+    const color   = parallelColor(item.parallel || 'Base');
+    const typeStr = item.type === 'psa10' ? 'PSA 10' : 'Raw';
+    const rowUrl  = item.itemUrl && !isMock ? `onclick="window.open('${item.itemUrl}','_blank')" style="cursor:pointer;"` : '';
     return `
       <tr ${rowUrl}>
         <td>${date}</td>
-        <td style="color:var(--text-primary);">${parallel}</td>
-        <td><span style="font-size:10px;padding:2px 6px;border-radius:3px;background:${item.type==='psa10'?'rgba(212,160,23,0.15)':'rgba(45,212,160,0.1)'};color:${item.type==='psa10'?'var(--gold)':'var(--green)'};">${typeDisp}</span></td>
+        <td><span style="color:${color};font-weight:500;">${item.parallel || '—'}</span></td>
+        <td><span style="font-size:10px;padding:2px 6px;border-radius:3px;background:${item.type==='psa10'?'rgba(212,160,23,0.15)':'rgba(45,212,160,0.1)'};color:${item.type==='psa10'?'var(--gold)':'var(--green)'};">${typeStr}</span></td>
         <td style="color:var(--green);font-weight:600;text-align:right;">${price}</td>
       </tr>`;
   }).join('');
 }
 
-/** Loading skeleton for eBay table */
+// Keep renderEbayTable as an alias for backward compat
+function renderEbayTable(items, source, type) {
+  if (items && source) {
+    ebayState.source     = source;
+    ebayState.activeType = type || 'raw';
+  }
+  redrawEbayTable();
+}
+
+/** Loading skeleton */
 function setEbayLoading(loading) {
   const tbody = document.getElementById('ebay-sales-body');
-  if (loading) {
+  if (loading && tbody) {
     tbody.innerHTML = [1,2,3].map(() => `
       <tr>
         <td><div class="skeleton skeleton-line" style="width:50px;"></div></td>
