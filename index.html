@@ -647,7 +647,7 @@ const CONFIG = {
 
   // How many leaders to fetch per level per call
   // GET /api/v1/stats?stats=season&group=hitting&sportId={id}&season={year}&limit=50
-  LEADERS_LIMIT: 50,
+  LEADERS_LIMIT: 75,
 
   SEASON: new Date().getFullYear(),
 
@@ -906,8 +906,7 @@ async function fetchLeaders(sportId, levelName, teamMap) {
     + `&sportId=${sportId}`
     + `&season=${year}`
     + `&limit=${CONFIG.LEADERS_LIMIT}`
-    + `&sortStat=onBasePlusSlugging`
-    + `&playerPool=qualified`;
+    + `&sortStat=onBasePlusSlugging`;
 
   const cacheKey = `leaders_${sportId}_${year}`;
   const data = await fetchCached(url, cacheKey, CONFIG.CACHE_TTL.leaders);
